@@ -1,0 +1,25 @@
+Instructions:
+
+I'm playing two person cribbage.  I want a python program that will help me choose the optimal cards to put
+in the kitty.  The program should take as input:
+- the six cards in my hand
+- number of simulations
+
+The goal is to figure out the best possible kitty cards, where the kitty is 2 cards removed from the 6.
+The program will loop over all 15 kitty combinations.
+For each possible kitty, the program will run a number of simulations. In each simulation:
+- Randomly choose a "top" or "starter" card that players share
+- randomly choose 4 cards for the opponent's hand.
+- play the first round, where players alternate, and there are points for adding up to 15, 31,
+  getting a pair, run, and other normal cribbage rules
+- repeat the first round for every given possible combination of playing my cards and my
+  opponent's cards. there should be 576 combinations.
+  - Store the maximum (best) score as round1_max
+- play the second round (the count) and count the score in the hand.
+  - store the score as round2
+For each possible kitty, calculate the average total score (sum of round1_max + round_2)
+
+Once all kitties are done, print the top 5 kitties, along with their average round 1 and round 2 scores
+
+
+
