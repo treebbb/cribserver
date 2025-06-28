@@ -117,6 +117,8 @@ async def join_game(game_id: str, request: JoinRequest):
     
     return {"status": "joined", "game_id": game_id, "player_count": len(game.players)}
 
+# In src/python/cribserver/server.py
+
 @app.post("/games/{game_id}/discard")
 async def discard_cards(game_id: str, request: DiscardRequest):
     """Discard 2 cards to the crib."""
@@ -143,7 +145,7 @@ async def discard_cards(game_id: str, request: DiscardRequest):
     
     # Check if both players have discarded
     if all(len(p.discarded) == 2 for p in game.players):
-        game.current_turn = game.players[1].player_id  # Non-dealer starts play phase
+        game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)  # Non-dealer (player 1) starts play phase
     
     return {"status": "discarded", "player_id": request.player_id}
 

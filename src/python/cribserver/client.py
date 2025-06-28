@@ -7,6 +7,9 @@ from .cards import Card
 import threading
 import sys
 
+
+# In src/python/cribserver/client.py
+
 class CribbageClient:
     def __init__(self, stdscr, server_url: str, player_id: str, player_name: str, game_id: str):
         self.stdscr = stdscr
@@ -24,9 +27,11 @@ class CribbageClient:
         # Set up curses
         curses.curs_set(0)  # Hide cursor
         curses.start_color()
-        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)    # Hearts/Diamonds
-        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_WHITE)  # Clubs/Spades
-        curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Messages
+        curses.use_default_colors()  # Use terminal's default colors
+        self.stdscr.bkgd(' ', curses.color_pair(0))  # Set background to black
+        curses.init_pair(1, curses.COLOR_RED, -1)    # Hearts/Diamonds (red on default bg)
+        curses.init_pair(2, curses.COLOR_BLACK, -1)  # Clubs/Spades (black on default bg)
+        curses.init_pair(3, curses.COLOR_GREEN, -1)  # Messages (green on default bg)
         self.stdscr.timeout(100)  # Non-blocking input
 
         # Start polling thread
@@ -112,37 +117,8 @@ class CribbageClient:
         except requests.RequestException as e:
             self.message = f"Error playing card: {str(e)}"
 
-    def simulate_discards(self):
-        """Get discard simulation results from server."""
-        if not self.state or "players" not in self.state:
-            self.message = "Game state not loaded"
-            return
-        player = next((p for p in self.state["players"] if p["player_id"] == self.player_id), None)
-        if not player:
-            self.message = "Player not found"
-            return
-        try:
-            response = requests.post(
-                f"{self.server_url}/games/{self.game_id}/simulate",
-                json={
-                    "player_id": self.player_id,
-                    "hand": player["hand"],
-                    "used_cards": self.state["played_cards"],
-                    "dealer": self.state["dealer"] == self.player_id,
-                    "num_simulations": 576
-                }
-            )
-            response.raise_for_status()
-            self.message = "Simulation results (top 5 discards):\n"
-            for i, result in enumerate(response.json()["top_discards"], 1):
-                kitty = ", ".join(f"{c['rank']} of {c['suit']}" for c in result["kitty"])
-                self.message += f"{i}. Kitty: {kitty}, Play: {result['avg_play_score']:.1f}, "
-                self.message += f"Show: {result['avg_show_score']:.1f}, "
-                if result["avg_crib_score"] is not None:
-                    self.message += f"Crib: {result['avg_crib_score']:.1f}, "
-                self.message += f"Total: {result['avg_total_score']:.1f}\n"
-        except requests.RequestException as e:
-            self.message = f"Error simulating: {str(e)}"
+
+# In src/python/cribserver/client.py
 
     def draw(self):
         """Draw the game UI."""
@@ -161,30 +137,39 @@ class CribbageClient:
         score_str = "Scores: " + ", ".join(f"{pid}: {score}" for pid, score in self.scores.items())
         self.stdscr.addstr(2, 0, score_str)
     
-        # Starter card
-        if self.state and self.state.get("starter"):
-            starter = self.state["starter"]
-            color = curses.color_pair(1) if starter["suit"] in ["hearts", "diamonds"] else curses.color_pair(2)
-            self.stdscr.addstr(4, 0, f"Starter: {starter['rank']} of {starter['suit']}", color)
+        # Starter card (only show after both players discard)
+        if self.state and self.state.get("starter") and all(len(p["discarded"]) == 2 for p in self.state["players"]):
+            starter = Card(**self.state["starter"])
+            color = curses.color_pair(1) if starter.suit in [Suit.HEARTS, Suit.DIAMONDS] else curses.color_pair(2)
+            self.stdscr.addstr(4, 0, f"Starter: {starter.to_display()}", color)
+    
+        # Played cards and running total
+        if self.state and self.state.get("played_cards"):
+            pile = ", ".join(Card(**c).to_display() for c in self.state["played_cards"])
+            self.stdscr.addstr(5, 0, f"Played: {pile} (Total: {self.state['current_total']})")
     
         # Player's hand
         if self.state and "players" in self.state:
             player = next((p for p in self.state["players"] if p["player_id"] == self.player_id), None)
             if player and player["hand"]:
-                self.stdscr.addstr(6, 0, "Your Hand:")
+                self.stdscr.addstr(7, 0, "Your Hand:")
                 for i, card in enumerate(player["hand"]):
-                    color = curses.color_pair(1) if card["suit"] in ["hearts", "diamonds"] else curses.color_pair(2)
-                    self.stdscr.addstr(7 + i, 0, f"{i+1}: {card['rank']} of {card['suit']}", color)
+                    card_obj = Card(**card)
+                    color = curses.color_pair(1) if card_obj.suit in [Suit.HEARTS, Suit.DIAMONDS] else curses.color_pair(2)
+                    self.stdscr.addstr(8 + i, 0, f"{i+1}: {card_obj.to_display()}", color)
     
-        # Input prompt
-        prompt = "Enter two card numbers to discard (e.g., '1 2'), 'q' to quit: "
+        # Input prompt (discard or play phase)
+        if self.state and all(len(p["discarded"]) == 2 for p in self.state["players"]) and not self.state["show_phase"]:
+            prompt = f"{'Your turn!' if self.state['current_turn'] == self.player_id else 'Waiting for opponent...'} Enter card number to play (e.g., '1'), 'q' to quit: "
+        else:
+            prompt = "Enter two card numbers to discard (e.g., '1 2'), 'q' to quit: "
         self.stdscr.addstr(height - 2, 0, prompt)
         self.stdscr.addstr(height - 1, 0, self.input_buffer)
     
         # Messages
         message_lines = self.message.split("\n")
         for i, line in enumerate(message_lines[:5]):
-            self.stdscr.addstr(6 + i, 30, line[:width-31], curses.color_pair(3))
+            self.stdscr.addstr(7 + i, 30, line[:width-31\, curses.color_pair(3))
     
         self.stdscr.refresh()
 
@@ -204,11 +189,23 @@ class CribbageClient:
                     self.input_buffer += " "
                 elif key == ord('\n'):
                     if self.input_buffer.strip():
-                        numbers = [int(n) - 1 for n in self.input_buffer.strip().split()]
-                        if len(numbers) == 2:
-                            self.discard_cards(numbers)
-                        else:
-                            self.message = "Please select exactly 2 cards to discard"
+                        # Discard phase: expect two numbers
+                        if self.state and not all(len(p["discarded"]) == 2 for p in self.state["players"]):
+                            numbers = [int(n) - 1 for n in self.input_buffer.strip().split()]
+                            if len(numbers) == 2:
+                                self.discard_cards(numbers)
+                            else:
+                                self.message = "Please select exactly 2 cards to discard"
+                        # Play phase: expect one number
+                        elif self.state and all(len(p["discarded"]) == 2 for p in self.state["players"]) and not self.state["show_phase"]:
+                            if self.state["current_turn"] == self.player_id:
+                                try:
+                                    card_index = int(self.input_buffer.strip()) - 1
+                                    self.play_card(card_index)
+                                except ValueError:
+                                    self.message = "Invalid card number"
+                            else:
+                                self.message = "Not your turn!"
                         self.input_buffer = ""
                 elif key == curses.KEY_BACKSPACE or key == 127:
                     self.input_buffer = self.input_buffer[:-1]
