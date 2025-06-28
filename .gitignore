@@ -1,1 +1,7 @@
 *~
+player_stats.json
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/

@@ -20,6 +20,3 @@ For each possible kitty, the program will run a number of simulations. In each s
 For each possible kitty, calculate the average total score (sum of round1_max + round_2)
 
 Once all kitties are done, print the top 5 kitties, along with their average round 1 and round 2 scores
-
-
-

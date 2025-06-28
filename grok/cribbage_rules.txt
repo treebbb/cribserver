@@ -1,0 +1,30 @@
+Grok, use my cribbage rules where:
+- two players
+- Four hands of 6 cards per player plus a starter card are dealt from a 52-card deck before reshuffling.
+- Used cards are removed from the deck before simulations.
+- Play phase scores pairs/runs from any played cards (not consecutive), plus 15s and 31s.
+- Show phase and crib (when dealer) use standard scoring (fifteens, pairs, runs, flush, nobs).
+- Program inputs: 6-card hand, number of simulations, dealer status, used cards.
+- Simulate 576 play sequences, score hand and crib (if dealer), output top 5 kitties with average round 1, round 2, kitty (if dealer), and total scores.
+
+Play Phase (Round 1) Scoring (Custom House Rule):
+- Players alternate playing cards, aiming to keep the running total ≤ 31.
+- Points are awarded to the player whose card triggers the score:
+- 15: 2 points if the total reaches exactly 15.
+- 31: 2 points if the total reaches exactly 31 (resets to 0).
+- Pairs/Triplets/Quads: Scored from any combination of played cards (not requiring consecutive plays):
+- Pair (2 cards of same value): 2 points.
+- Triplet (3 cards): 6 points total (2 + 4).
+- Quad (4 cards): 12 points total (2 + 4 + 6).
+- Runs: 3+ points for any combination of 3 or more played cards forming consecutive values (e.g., 5, 6, 7 in any order), scored when the run is completed.
+- Go: 1 point to the player of the last card, if the other player is out of cards or has no cards to play that would add to <= 31
+ 
+Show Phase (Round 2) Scoring:
+- Standard cribbage scoring for the hand (4 cards + starter):
+- Fifteens: 2 points per combination totaling 15.
+- Pairs: 2 points per pair.
+- Runs: 3+ points for sequences of 3 or more consecutive values.
+- Flush: 4 points if all 4 hand cards are the same suit; 5 points if all 5 (including starter) match.
+- Nobs: 1 point for a Jack in the hand matching the starter’s suit.
+- Crib scoring (when dealer):
+- Same as hand scoring, but flush requires all 5 cards (4 crib cards + starter) to match (5 points).

@@ -1,0 +1,73 @@
+Project Summary: Multiplayer Card Game on Household LAN
+
+Objective: Build a toy multiplayer card game for family play over a household LAN, designed to teach programming concepts.
+           The game uses a server-client model with stateless HTTP/REST APIs, starting with a curses-based text client and potential for a Tkinter graphical client later.
+
+Key Components:
+
+1. Server:
+   - Role: Holds all game state (deck, players’ hands, shared cards, scores, turn order) and handles game logic (e.g., validating card plays).
+   - Implementation: Python with Flask or FastAPI, storing state in memory (e.g., dictionaries). Optional JSON file for persistent player stats.
+   - REST APIs:
+     - GET /games: List available games (discovery).
+     - POST /games/{game_id}/join: Join a game with player ID/name.
+     - GET /games/{game_id}/state: Get current state (hands, shared cards, turn).
+     - POST /games/{game_id}/play: Play a card (game-specific validation).
+     - GET /games/{game_id}/score: Get current scores (if applicable).
+     - GET /players/{player_id}/stats: Retrieve player stats (e.g., wins, games played).
+   - Notes: 
+     - Turn-based to simplify concurrency (server enforces turn order).
+     - Start with one game, Cribbage, for simplicity.
+
+2. Client (Curses-Based):
+   - Role: Displays game state (hand, shared cards, turn, scores) in a terminal using Python’s curses module and sends actions via API calls.
+      - UI:
+      - Text-based layout with sections (e.g., hand as numbered list, shared cards, game messages).
+      - Simple input (e.g., enter “1” to play first card) or arrow keys for selection.
+      - Optional colors for suits or highlights.
+      - State Updates: Polls server every 1–2 seconds (GET /games/{game_id}/state) to refresh display.
+      - Error Handling: Shows server errors (e.g., “Invalid move”) or network issues (e.g., “Server offline, retrying”).
+      - Implementation: Python with curses and requests for API calls.
+      - Notes:
+          - Start with minimal UI (single window, hand + prompt) to focus on logic.
+          - Teaching: Terminal UI, event handling, HTTP requests, JSON parsing.
+
+3. Game Logic:
+   - Approach: Server enforces rules for a single game (e.g., Crazy Eights: match suit/rank, eights wild).
+      - Data Model: Cards as JSON (e.g., { "suit": "hearts", "rank": "ace" }), supporting multiple games later.
+
+4. Statistics Tracking:
+   - Approach: Track stats (e.g., wins, games played) in a JSON file on the server, exposed via GET /players/{player_id}/stats.
+      - Display: Show in curses (e.g., “Press S for stats”) or Tkinter window.
+
+5. Network:
+   - Setup: Household LAN with fixed server IP/port (e.g., 192.168.1.x:5000).
+      - Protocol: Stateless HTTP/REST for simplicity, with error handling for network issues.
+
+Design Decisions:
+- Game Choice: Start with a simple game (Crazy Eights or Go Fish) to minimize complexity.
+- Client Simplicity: Begin with basic curses UI (hand + prompt), adding features (colors, windows) later.
+- State Management: In-memory state for simplicity, optional JSON file for stats.
+- Concurrency: Turn-based gameplay to avoid conflicts.
+- Modularity: Separate API logic from UI for easy Tkinter transition.
+
+Teaching Opportunities:
+- Client-server model, REST APIs, JSON handling.
+- Terminal UI (curses), event-driven programming.
+- Networking (LAN, HTTP, error handling).
+- Game logic (rules, validation, data structures).
+- Modularity and code reuse for Tkinter.
+- Persistence (JSON files, trade-offs).
+
+Next Steps:
+- Choose a specific card game to define rules and APIs.
+- Design minimal curses UI (e.g., hand display, input prompt).
+- Decide input method (numbers vs. arrow keys).
+- Plan stats to track (e.g., wins, games played).
+- Confirm tools (Python, Flask/FastAPI, curses, requests).
+
+Notes:
+- Project is for family play, not wide sharing, so security (e.g., authentication) is optional.
+- Polling is sufficient for updates; Webmonials later.
+- Keep scope small initially to focus on teaching, expand as skills grow.
+
