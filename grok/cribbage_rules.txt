@@ -4,8 +4,6 @@ Grok, use my cribbage rules where:
 - Used cards are removed from the deck before simulations.
 - Play phase scores pairs/runs from any played cards (not consecutive), plus 15s and 31s.
 - Show phase and crib (when dealer) use standard scoring (fifteens, pairs, runs, flush, nobs).
-- Program inputs: 6-card hand, number of simulations, dealer status, used cards.
-- Simulate 576 play sequences, score hand and crib (if dealer), output top 5 kitties with average round 1, round 2, kitty (if dealer), and total scores.
 
 Play Phase (Round 1) Scoring (Custom House Rule):
 - Players alternate playing cards, aiming to keep the running total ≤ 31.

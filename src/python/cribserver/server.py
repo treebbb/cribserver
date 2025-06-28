@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Optional
 import json
 import os
+import random
 import uvicorn  # Add uvicorn import
 from .cards import Card, create_deck
 from .cribbage import score_play_phase, score_show_phase, simulate_play_sequences
@@ -75,7 +76,7 @@ async def list_games():
 
 @app.post("/games/{game_id}/join")
 async def join_game(game_id: str, request: JoinRequest):
-    """Join a Cribbage game (2 players)."""
+    """Join a Cribbage game (2 players) and deal cards when full."""
     if game_id not in games:
         games[game_id] = GameState(
             game_id=game_id,
@@ -98,22 +99,23 @@ async def join_game(game_id: str, request: JoinRequest):
     
     game.players.append(Player(player_id=request.player_id, name=request.name))
     
-    # Deal 6 cards when 2 players join
+    # Deal 6 cards to each player and set starter when 2 players join
     if len(game.players) == 2:
+        random.shuffle(game.deck)  # Ensure deck is shuffled
         for player in game.players:
             player.hand = [game.deck.pop() for _ in range(6)]
         game.starter = game.deck.pop()
         game.dealer = game.players[0].player_id
-        game.current_turn = game.players[1].player_id  # Non-dealer starts
+        game.current_turn = game.players[1].player_id  # Non-dealer starts discard phase
     
+    # Update player stats
     if request.player_id not in player_stats:
         player_stats[request.player_id] = {"name": request.name, "wins": 0, "games_played": 1}
-        save_stats()
     else:
         player_stats[request.player_id]["games_played"] += 1
-        save_stats()
+    save_stats()
     
-    return {"status": "joined", "game_id": game_id}
+    return {"status": "joined", "game_id": game_id, "player_count": len(game.players)}
 
 @app.post("/games/{game_id}/discard")
 async def discard_cards(game_id: str, request: DiscardRequest):
