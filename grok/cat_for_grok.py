@@ -3,6 +3,7 @@
 import os
 
 def print_file(file_path):
+    ext = os.path.splitext(file_path)[1]
     # Print filename as C++ comment
     print(f"/* BEGIN {file_path} */")
     try:
@@ -42,11 +43,9 @@ def main():
         for filename in args:
             print_file(filename)
     else:
-        process_dir('./', 'Makefile')
-        process_dir('include', '.h')
-        process_dir('src', '.cpp')
-        process_dir('src/python', '.py')
-        process_dir('tests', '.cpp')
+        process_dir('grok', '.txt')
+        process_dir('src/python/cribserver', '.py')
+        process_dir('./', '.py')
 
 
 main()
