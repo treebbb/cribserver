@@ -59,7 +59,21 @@ class Card:
         return suit_idx * 13 + rank_idx
 
 
+
 class Deck:
+    '''
+    now implement a Deck of 52 cards. A deck should have state:1 or more named "piles".
+    These piles are ordered lists of cards, representing remaining cards, player hands, discarded cards, or cards in play in the  area share by players.
+    
+    Deck should have the following methods"card" or "cards" below means the card_idx (0 to 51) unless otherwise stated.
+    reset(): the original state of the deck is: all 52 cards are in the "remaining" pile. order of cards in remaining pile is randomized. an empty "discard" pile is created.
+    shuffle(): all cards are moved to the "remaining" pile. order of cards is randomized. "discard" pile and any other piles are empty. does not remove any created piles, just empties them.
+    create_pile(name): creates a named pile.
+    deal_to_pile(name): removes the top card from the "remaining" pile and moves it to the named pile.
+    deal_to_piles(list_of_names, num_cards): deals from top of pile to each pile in the given list. e.g. if list_of_names=["A", "B"] and num_cards=3, then cards will be dealt to A,B,A,B,A,B
+    play_card(card_idx, pile1, pile2): moves card from pile1 to pile2
+    get_cards(name): returns a list of all cards in that named pile
+    '''
     REMAINING = "remaining"
     DISCARD = "discard"
     PROTECTED_PILE_NAMES = [REMAINING, DISCARD]

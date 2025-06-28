@@ -45,7 +45,9 @@ def main():
     else:
         process_dir('grok', '.txt')
         process_dir('src/python/cribserver', '.py')
+        process_dir('tests', '.py')
         process_dir('./', '.py')
+        process_dir('./', '.toml')
 
 
 main()
