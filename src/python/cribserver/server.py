@@ -5,7 +5,7 @@ import json
 import os
 import random
 import uvicorn
-from .cards import Card, create_deck, Suit, Rank
+from .cards import Card, Deck
 from .cribbage import score_play_phase, score_show_phase, simulate_play_sequences
 
 # Initialize FastAPI app
@@ -84,7 +84,7 @@ async def join_game(game_id: str, request: JoinRequest):
         games[game_id] = GameState(
             game_id=game_id,
             players=[],
-            deck=create_deck(),
+            deck=Deck(),
             starter=None,
             dealer=None,
             current_turn=None,
