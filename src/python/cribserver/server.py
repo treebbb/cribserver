@@ -4,8 +4,8 @@ from typing import List, Dict, Optional
 import json
 import os
 import random
-import uvicorn  # Add uvicorn import
-from .cards import Card, create_deck
+import uvicorn
+from .cards import Card, create_deck, Suit, Rank
 from .cribbage import score_play_phase, score_show_phase, simulate_play_sequences
 
 # Initialize FastAPI app
@@ -43,6 +43,9 @@ class DiscardRequest(BaseModel):
     player_id: str
     cards: List[Card]
 
+class GoRequest(BaseModel):
+    player_id: str
+    
 class SimulateRequest(BaseModel):
     player_id: str
     hand: List[Card]
@@ -117,8 +120,6 @@ async def join_game(game_id: str, request: JoinRequest):
     
     return {"status": "joined", "game_id": game_id, "player_count": len(game.players)}
 
-# In src/python/cribserver/server.py
-
 @app.post("/games/{game_id}/discard")
 async def discard_cards(game_id: str, request: DiscardRequest):
     """Discard 2 cards to the crib."""
@@ -171,16 +172,19 @@ async def play_card(game_id: str, request: PlayRequest):
     player = next((p for p in game.players if p.player_id == request.player_id), None)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
-    if request.card not in player.hand:
+    
+    # Convert request.card to Card object
+    card = Card(**request.card.dict())  # Ensure it's a Card instance
+    if card not in player.hand:
         raise HTTPException(status_code=400, detail="Card not in hand")
-    if game.current_total + request.card.value() > 31:
+    if game.current_total + card.value() > 31:
         raise HTTPException(status_code=400, detail="Card exceeds 31")
     
     # Play card
-    player.hand.remove(request.card)
-    game.played_cards.append(request.card)
-    game.current_total += request.card.value()
-    player.score += score_play_phase(game.played_cards[:-1], request.card)
+    player.hand.remove(card)
+    game.played_cards.append(card)
+    game.current_total += card.value()
+    player.score += score_play_phase(game.played_cards[:-1], card)
     
     # Check for Go
     next_player = game.players[(game.players.index(player) + 1) % 2]
@@ -202,6 +206,7 @@ async def play_card(game_id: str, request: PlayRequest):
         # Determine winner
         winner = max(game.players, key=lambda p: p.score)
         player_stats[winner.player_id]["wins"] += 1
+        saveV
         save_stats()
         # Reset game
         games[game_id] = GameState(
@@ -223,7 +228,65 @@ async def play_card(game_id: str, request: PlayRequest):
         game.current_total = 0
         game.played_cards = []
     
-    return {"status": "played", "card": request.card}
+    return {"status": "played", "card": card.dict()}  # Return card as dict to avoid serialization issues
+
+@app.post("/games/{game_id}/go")
+async def go(game_id: str, request: GoRequest):
+    """Player passes (Go) when no cards can be played <= 31."""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    if game.show_phase:
+        raise HTTPException(status_code=400, detail="In show phase, cannot call Go")
+    if request.player_id != game.current_turn:
+        raise HTTPException(status_code=400, detail="Not your turn")
+    
+    player = next((p for p in game.players if p.player_id == request.player_id), None)
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    
+    # Check if player has valid moves
+    if any(c.value() + game.current_total <= 31 for c in player.hand):
+        raise HTTPException(status_code=400, detail="You have playable cards")
+    
+    # Award Go point to opponent if they can play
+    next_player = game.players[(game.players.index(player) + 1) % 2]
+    next_valid = any(c.value() + game.current_total <= 31 for c in next_player.hand)
+    if next_valid:
+        next_player.score += 1  # Go point to opponent
+        game.current_turn = next_player.player_id
+    else:
+        player.score += 1  # Go point if both cannot play
+        game.current_total = 0
+        game.played_cards = []
+    
+    # Check if play phase is over
+    if not any(p.hand for p in game.players):
+        game.show_phase = True
+        for p in game.players:
+            p.score += score_show_phase(p.hand, game.starter, is_crib=False)
+        if game.dealer:
+            dealer = next(p for p in game.players if p.player_id == game.dealer)
+            dealer.score += score_show_phase(game.crib, game.starter, is_crib=True)
+        winner = max(game.players, key=lambda p: p.score)
+        player_stats[winner.player_id]["wins"] += 1
+        save_stats()
+        games[game_id] = GameState(
+            game_id=game_id,
+            players=[],
+            deck=create_deck(),
+            starter=None,
+            dealer=None,
+            current_turn=None,
+            played_cards=[],
+            current_total=0,
+            show_phase=False,
+            crib=[]
+        )
+        return {"status": "game_over", "winner": winner.player_id}
+    
+    return {"status": "go", "player_id": request.player_id}
 
 @app.get("/games/{game_id}/score")
 async def get_scores(game_id: str):
@@ -249,16 +312,16 @@ async def simulate_discards(game_id: str, request: SimulateRequest):
     
     game = games[game_id]
     results = simulate_play_sequences(
-        hand=request.hand,
+        hand=[Card(**c) for c in request.hand],  # Convert to Card objects
         starter=game.starter,
-        used_cards=request.used_cards,
+        used_cards=[Card(**c) for c in request.used_cards],
         dealer=request.dealer,
         num_simulations=request.num_simulations
     )
     return {
         "top_discards": [
             {
-                "kitty": kitty,
+                "kitty": [card.dict() for card in kitty],  # Convert back to dict for JSON response
                 "avg_play_score": play,
                 "avg_show_score": show,
                 "avg_crib_score": crib if request.dealer else None,

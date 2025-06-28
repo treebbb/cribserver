@@ -3,7 +3,7 @@ import requests
 import time
 import json
 from typing import List, Optional
-from .cards import Card
+from .cards import Card, Suit, Rank
 import threading
 import sys
 
@@ -93,6 +93,24 @@ class CribbageClient:
         except requests.RequestException as e:
             self.message = f"Error discarding: {str(e)}"
 
+    def call_go(self):
+        """Send Go request to server when player cannot play a card."""
+        if not self.state or "players" not in self.state:
+            self.message = "Game state not loaded"
+            return
+        if self.state["current_turn"] != self.player_id:
+            self.message = "Not your turn!"
+            return
+        try:
+            response = requests.post(
+                f"{self.server_url}/games/{self.game_id}/go",
+                json={"player_id": self.player_id}
+            )
+            response.raise_for_status()
+            self.message = "Called Go"
+        except requests.RequestException as e:
+            self.message = f"Error calling Go: {str(e)}"            
+
     def play_card(self, card_index: int):
         """Send play request to server."""
         if not self.state or "players" not in self.state:
@@ -169,7 +187,7 @@ class CribbageClient:
         # Messages
         message_lines = self.message.split("\n")
         for i, line in enumerate(message_lines[:5]):
-            self.stdscr.addstr(7 + i, 30, line[:width-31\, curses.color_pair(3))
+            self.stdscr.addstr(7 + i, 30, line[:width-31], curses.color_pair(3))
     
         self.stdscr.refresh()
 
@@ -199,6 +217,8 @@ class CribbageClient:
                         # Play phase: expect one number
                         elif self.state and all(len(p["discarded"]) == 2 for p in self.state["players"]) and not self.state["show_phase"]:
                             if self.state["current_turn"] == self.player_id:
+                                if self.input_buffer.strip() == 'g':
+                                    self.call_go()
                                 try:
                                     card_index = int(self.input_buffer.strip()) - 1
                                     self.play_card(card_index)
@@ -223,7 +243,7 @@ def main(stdscr):
     import os
     server_url = os.environ['CRIBSERVER']
     player_id = f"player_{int(time.time())}"  # Unique ID
-    player_name = "Player"  # Replace with desired name
+    player_name = os.environ.get('CRIBNAME')
     game_id = "game1"
 
     client = CribbageClient(stdscr, server_url, player_id, player_name, game_id)

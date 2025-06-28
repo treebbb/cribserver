@@ -3,4 +3,5 @@ GROK, PAY ATTENTION TO THESE INSTRUCTIONS:
 Prioritize short answers. Single paragraph where possible.
 Don't re-output all of the code. It's too slow in my browser. Where a code change is requested, just show the changed sections.
 Don't give me extra instructions. I'll ask for details if I need them.
+when you output single line changes, can you show git style diffs rather than outputting the entire method again?
 
