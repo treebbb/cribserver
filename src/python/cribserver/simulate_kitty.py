@@ -160,21 +160,36 @@ def simulate_play(my_hand, opp_hand, starter, is_dealer):
     return max_score
 
 # Main function to evaluate kitties
-def evaluate_kitties(my_hand_input, num_simulations, is_dealer=False):
+def evaluate_kitties(my_hand_input, num_simulations, is_dealer=False, used_cards_input=""):
     try:
         my_hand = [(int(c[:-1]), c[-1].upper()) for c in my_hand_input.split()]
         if len(my_hand) != 6 or len(set(my_hand)) != 6:
             raise ValueError("Invalid hand: Must have exactly 6 unique cards")
+        
+        # Parse used cards
+        used_cards = []
+        if used_cards_input.strip():
+            used_cards = [(int(c[:-1]), c[-1].upper()) for c in used_cards_input.split()]
+            if len(set(used_cards)) != len(used_cards):
+                raise ValueError("Used cards must be unique")
+        
+        # Check for overlap between hand and used cards
+        if any(card in used_cards for card in my_hand):
+            raise ValueError("Hand cards cannot be in used cards")
     except:
         print("Error: Invalid card format. Use e.g., '5H 10D JC' (1-13 for A-K, S/H/D/C for suits)")
         return
     
     deck = create_deck()
-    for card in my_hand:
+    for card in my_hand + used_cards:
         if card not in deck:
             print(f"Error: Invalid card {card}")
             return
         deck.remove(card)
+    
+    if len(deck) < 7:  # Need at least 6 for opponent + 1 for starter
+        print("Error: Not enough cards left in deck after removing hand and used cards")
+        return
     
     kitty_scores = defaultdict(lambda: {'round1': [], 'round2': [], 'crib': []})
     
@@ -185,8 +200,8 @@ def evaluate_kitties(my_hand_input, num_simulations, is_dealer=False):
         for _ in range(num_simulations):
             starter = random.choice(deck)
             opp_possible_cards = [c for c in deck if c != starter]
-            opp_six = random.sample(opp_possible_cards, 6)
-            opp_hand = random.sample(opp_six, 4)
+            opp_six = random.sample(opp_possible_cards, min(6, len(opp_possible_cards)))
+            opp_hand = random.sample(opp_six, min(4, len(opp_six)))
             opp_crib_cards = [c for c in opp_six if c not in opp_hand]
             crib = kitty + opp_crib_cards
             
@@ -221,7 +236,7 @@ def evaluate_kitties(my_hand_input, num_simulations, is_dealer=False):
         print(f"   Avg Round 1 (Play): {result['avg_round1']:.2f}")
         print(f"   Avg Round 2 (Show): {result['avg_round2']:.2f}")
         if is_dealer:
-            print(f"   Avg Crib Score: {result['avg_crib']:.2f}")
+            print(f"   Avg Kitty Score: {result['avg_crib']:.2f}")
         print(f"   Avg Total Score: {result['avg_total']:.2f}\n")
 
 # Example usage
@@ -229,4 +244,6 @@ if __name__ == "__main__":
     hand_input = input("Enter your 6 cards (e.g., '5H 5D 6C 7S 8H JD'): ")
     num_sim = int(input("Enter number of simulations: "))
     is_dealer = input("Are you the dealer? (y/n): ").lower() == 'y'
-    evaluate_kitties(hand_input, num_sim, is_dealer)
+    used_cards_input = input("Enter used cards (space-separated, or press Enter for none): ")
+    evaluate_kitties(hand_input, num_sim, is_dealer, used_cards_input)
+    
