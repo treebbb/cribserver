@@ -14,6 +14,7 @@ from typing import List, Tuple
 from openai import OpenAI
 
 ASSISTANT = 'assistant'
+SYSTEM_PROMPT = open('grok/instructions.txt', 'r').read()
 
 class GrokChat:
     MODEL = "grok-3"
@@ -26,7 +27,10 @@ class GrokChat:
             api_key=os.getenv("XAI_API_KEY"),
             base_url=self.ENDPOINT,
         )
-        self.conversation_history = [] # list of dicts {role: x, content: x}
+        # Initialize conversation history with a system prompt
+        self.conversation_history = [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]  # list of dicts {role: x, content: x}
         self.display_history = []  # For rendering in curses
         for dir_idx in range(100):
             self.output_dir = os.path.join(self.OUTPUT_DIR, str(dir_idx).zfill(4))
@@ -126,7 +130,7 @@ class GrokCursesApp:
         """Set up the curses windows for input, output, and status with color support."""
         self.stdscr.clear()
         self.height, self.width = self.stdscr.getmaxyx()
-
+    
         # Initialize color support
         if curses.has_colors():
             curses.start_color()
@@ -152,13 +156,11 @@ class GrokCursesApp:
         self.update_status()
 
     def update_status(self):
-        """Update the status window with the number of requests made to Grok."""
+        """Update the status window with the number of requests made to Grok and the output directory."""
         self.status_win.clear()
         request_count = sum(1 for item in self.chat.conversation_history if item['role'] == 'user')
-        status_text = f" Grok Requests: {request_count} "
+        status_text = f" Grok Requests: {request_count}    Output Dir: {self.chat.output_dir} "
         self.status_win.addstr(1, 0, status_text, self.status_color_pair)
-        status_text = f" Output Dir: {self.chat.output_dir}"
-        self.status_win.addstr(2, 0, status_text, self.status_color_pair)
         self.status_win.refresh()
 
     def resize_windows(self):
@@ -191,7 +193,7 @@ class GrokCursesApp:
             if role == ASSISTANT:
                 color_pair = curses.color_pair(1)
             else:
-                color_pair = curses.color_pair(2)
+                color_pair = curses.color_pair(2)                
             # Process the line with wrapping
             while line and current_row < visible_lines:
                 if len(line) <= max_width:
