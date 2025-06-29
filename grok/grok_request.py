@@ -28,8 +28,11 @@ class GrokChat:
         )
         self.conversation_history = [] # list of dicts {role: x, content: x}
         self.display_history = []  # For rendering in curses
-        if not os.path.exists(self.OUTPUT_DIR):
-            os.makedirs(self.OUTPUT_DIR)
+        for dir_idx in range(100):
+            self.output_dir = os.path.join(self.OUTPUT_DIR, str(dir_idx).zfill(4))
+            if not os.path.exists(self.output_dir):
+                os.makedirs(self.output_dir)
+                break
 
     def _process_file_content(self, input_str):
         """Process lines starting with 'file:' to include file contents."""
@@ -37,10 +40,14 @@ class GrokChat:
         for line in input_str.splitlines():
             if line.startswith('file:'):
                 filepath = line[5:].strip()
-                result += f"/* BEGIN {filepath} */\n"
+                ext = os.path.splitext(filepath)[1]
+                if ext == '.py':
+                    comment_begin, comment_end = '#', '#'
+                else:
+                    comment_begin, comment_end = '/*', '*/'
+                result += f"{comment_begin} BEGIN {filepath} {comment_end}\n"
                 result += open(filepath, 'r').read()
-                result += f"\n/* END {filepath} */"
-                result += "\n"
+                result += f"\n{comment_begin} END {filepath} {comment_end}\n"
             else:
                 result += line + "\n"
         return result
@@ -58,11 +65,11 @@ class GrokChat:
                     if not filename or filename.startswith('___'):
                         for code_idx in range(100):
                             filename = f'code_block_{code_idx}'
-                            filepath = os.path.join(self.OUTPUT_DIR, filename)
+                            filepath = os.path.join(self.output_dir, filename)
                             if not os.path.exists(filepath):
                                 break
                     else:
-                        filepath = os.path.join(self.OUTPUT_DIR, filename)
+                        filepath = os.path.join(self.output_dir, filename)
                     with open(filepath, 'w') as f:
                         for line in code_block[1:]:
                             f.write(line)
@@ -89,7 +96,7 @@ class GrokChat:
                 request['content'] = self._process_file_content(request['content'])
             history.append(request)
         filename = str(time.time()) + '_request.json'
-        filepath = os.path.join(self.OUTPUT_DIR, filename)
+        filepath = os.path.join(self.output_dir, filename)
         with open(filepath, 'w') as f:
             json.dump(history, f, indent=2)
         try:
@@ -100,7 +107,7 @@ class GrokChat:
                 max_tokens=5000
             )
             filename = str(time.time()) + '_response.json'
-            filepath = os.path.join(self.OUTPUT_DIR, filename)
+            filepath = os.path.join(self.output_dir, filename)
             with open(filepath, 'w') as f:
                 json.dump(completion.to_dict(), f, indent=2)
             return completion.choices[0].message.content
@@ -116,46 +123,54 @@ class GrokCursesApp:
         self.setup_windows()
 
     def setup_windows(self):
-        """Set up the curses windows for input and output with color support."""
+        """Set up the curses windows for input, output, and status with color support."""
         self.stdscr.clear()
         self.height, self.width = self.stdscr.getmaxyx()
 
         # Initialize color support
         if curses.has_colors():
             curses.start_color()
-            # overrides Terminal palette for background. (color_index, R,G,B)
-            # there are 7 color indexes. black 0,red 1, green 2, yellow 3, blue 4, magenta 5, cyan 6, white 7
             curses.init_color(curses.COLOR_BLACK, 0, 0, 0)
-            # Explicitly initialize color pair for green text on black background
             curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
             curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
+            curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_BLUE)  # Status bar color
             self.color_pair = curses.color_pair(1)
-            # Debug: Check if colors are supported and initialized
-            self.stdscr.addstr(0, 0, "Colors supported: Yes", self.color_pair)
-            self.stdscr.refresh()
-            time.sleep(1)  # Brief pause to see debug message (optional)
+            self.status_color_pair = curses.color_pair(3)
         else:
-            self.color_pair = 0  # Fallback if colors are not supported
-            self.stdscr.addstr(0, 0, "Colors supported: No")
-            self.stdscr.refresh()
-            time.sleep(1)  # Brief pause to see debug message (optional)
-
-        # Output window (top 3/4 of screen)
-        self.output_win_height = self.height - 5
-        self.output_win = curses.newwin(self.output_win_height, self.width, 0, 0)
+            self.color_pair = 0
+            self.status_color_pair = 0
+        # Status window (top 3 lines)
+        self.status_win = curses.newwin(3, self.width, 0, 0)
+        # Output window (below status window)
+        self.output_win_height = self.height - 8  # Adjusted for status window
+        self.output_win = curses.newwin(self.output_win_height, self.width, 3, 0)
         self.output_win.scrollok(True)
-
         # Input window (bottom part of screen)
         self.input_win = curses.newwin(5, self.width, self.height - 5, 0)
         self.input_win.scrollok(True)
+        # init status display
+        self.update_status()
+
+    def update_status(self):
+        """Update the status window with the number of requests made to Grok."""
+        self.status_win.clear()
+        request_count = sum(1 for item in self.chat.conversation_history if item['role'] == 'user')
+        status_text = f" Grok Requests: {request_count} "
+        self.status_win.addstr(1, 0, status_text, self.status_color_pair)
+        status_text = f" Output Dir: {self.chat.output_dir}"
+        self.status_win.addstr(2, 0, status_text, self.status_color_pair)
+        self.status_win.refresh()
 
     def resize_windows(self):
         """Handle window resizing."""
         self.height, self.width = self.stdscr.getmaxyx()
-        self.output_win_height = self.height - 5
+        self.status_win.resize(3, self.width)
+        self.output_win_height = self.height - 8
         self.output_win.resize(self.output_win_height, self.width)
+        self.output_win.mvwin(3, 0)
         self.input_win.resize(5, self.width)
         self.input_win.mvwin(self.height - 5, 0)
+        self.update_status()
         self.redraw()
 
     def redraw(self):
@@ -228,6 +243,7 @@ class GrokCursesApp:
                         self.chat.conversation_history.append(d)
                         self.chat.display_history.append(d)
                         self.redraw()
+                        self.update_status()  # Update status after new request
 
                         self.input_win.clear()
                         self.input_win.addstr(0, 0, "Input (Ctrl+D to send, Ctrl+C to exit):", self.color_pair)
