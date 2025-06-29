@@ -1,4 +1,7 @@
 #! /usr/bin/env python3
+'''
+https://console.x.ai
+'''
 
 import curses
 from curses import wrapper
@@ -9,6 +12,8 @@ import re
 import time
 from typing import List, Tuple
 from openai import OpenAI
+
+ASSISTANT = 'assistant'
 
 class GrokChat:
     MODEL = "grok-3"
@@ -32,7 +37,7 @@ class GrokChat:
         for line in input_str.splitlines():
             if line.startswith('file:'):
                 filepath = line[5:].strip()
-                result = f"/* BEGIN {filepath} */\n"
+                result += f"/* BEGIN {filepath} */\n"
                 result += open(filepath, 'r').read()
                 result += f"\n/* END {filepath} */"
                 result += "\n"
@@ -96,8 +101,6 @@ class GrokChat:
             )
             filename = str(time.time()) + '_response.json'
             filepath = os.path.join(self.OUTPUT_DIR, filename)
-            #d = completion.to_dict()
-            #open(filepath + '.x', 'w').write(str(d))
             with open(filepath, 'w') as f:
                 json.dump(completion.to_dict(), f, indent=2)
             return completion.choices[0].message.content
@@ -113,9 +116,29 @@ class GrokCursesApp:
         self.setup_windows()
 
     def setup_windows(self):
-        """Set up the curses windows for input and output."""
+        """Set up the curses windows for input and output with color support."""
         self.stdscr.clear()
         self.height, self.width = self.stdscr.getmaxyx()
+
+        # Initialize color support
+        if curses.has_colors():
+            curses.start_color()
+            # overrides Terminal palette for background. (color_index, R,G,B)
+            # there are 7 color indexes. black 0,red 1, green 2, yellow 3, blue 4, magenta 5, cyan 6, white 7
+            curses.init_color(curses.COLOR_BLACK, 0, 0, 0)
+            # Explicitly initialize color pair for green text on black background
+            curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
+            curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
+            self.color_pair = curses.color_pair(1)
+            # Debug: Check if colors are supported and initialized
+            self.stdscr.addstr(0, 0, "Colors supported: Yes", self.color_pair)
+            self.stdscr.refresh()
+            time.sleep(1)  # Brief pause to see debug message (optional)
+        else:
+            self.color_pair = 0  # Fallback if colors are not supported
+            self.stdscr.addstr(0, 0, "Colors supported: No")
+            self.stdscr.refresh()
+            time.sleep(1)  # Brief pause to see debug message (optional)
 
         # Output window (top 3/4 of screen)
         self.output_win_height = self.height - 5
@@ -125,8 +148,6 @@ class GrokCursesApp:
         # Input window (bottom part of screen)
         self.input_win = curses.newwin(5, self.width, self.height - 5, 0)
         self.input_win.scrollok(True)
-        self.input_win.addstr(0, 0, "Input (Ctrl+D to send, Ctrl+C to exit):")
-        self.input_win.refresh()
 
     def resize_windows(self):
         """Handle window resizing."""
@@ -138,7 +159,7 @@ class GrokCursesApp:
         self.redraw()
 
     def redraw(self):
-        """Redraw the output window content with line wrapping."""
+        """Redraw the output window content with line wrapping and color."""
         self.output_win.clear()
         visible_lines = self.output_win_height - 1
         start_idx = max(0, len(self.chat.display_history) - visible_lines + self.scroll_offset)
@@ -147,16 +168,21 @@ class GrokCursesApp:
         max_width = self.width - 1  # Maximum width per line
         current_row = 0  # Track current row in window
 
-        for line in self.chat.display_history[start_idx:end_idx]:
+        for history_item in self.chat.display_history[start_idx:end_idx]:
             if current_row >= visible_lines:
                 break
-
+            line = history_item['content']
+            role = history_item['role']
+            if role == ASSISTANT:
+                color_pair = curses.color_pair(1)
+            else:
+                color_pair = curses.color_pair(2)
             # Process the line with wrapping
             while line and current_row < visible_lines:
                 if len(line) <= max_width:
                     # Line fits entirely, display it
                     try:
-                        self.output_win.addstr(current_row, 0, line)
+                        self.output_win.addstr(current_row, 0, line, color_pair)
                         current_row += 1
                     except curses.error:
                         pass
@@ -174,7 +200,7 @@ class GrokCursesApp:
 
                     # Display the segment up to split_pos
                     try:
-                        self.output_win.addstr(current_row, 0, line[:split_pos])
+                        self.output_win.addstr(current_row, 0, line[:split_pos], color_pair)
                         current_row += 1
                         # Move to next segment, skip the space if we split on one
                         line = line[split_pos + 1 if last_space != -1 else split_pos:].lstrip()
@@ -198,19 +224,21 @@ class GrokCursesApp:
 
                 elif key == 4:  # Ctrl+D
                     if current_input:
-                        self.chat.conversation_history.append({"role": "user", "content": current_input})
-                        self.chat.display_history.append("User: " + current_input)
+                        d = {"role": "user", "content": current_input}
+                        self.chat.conversation_history.append(d)
+                        self.chat.display_history.append(d)
                         self.redraw()
 
                         self.input_win.clear()
-                        self.input_win.addstr(0, 0, "Input (Ctrl+D to send, Ctrl+C to exit):")
+                        self.input_win.addstr(0, 0, "Input (Ctrl+D to send, Ctrl+C to exit):", self.color_pair)
                         self.input_win.refresh()
                         current_input = ""
 
                         response = self.chat.query_grok()
                         processed_response = self.chat._save_code_blocks_to_files(response)
-                        self.chat.conversation_history.append({"role": "assistant", "content": response})
-                        self.chat.display_history.append("Grok: " + processed_response)
+                        d = {"role": ASSISTANT, "content": processed_response}
+                        self.chat.conversation_history.append(d)
+                        self.chat.display_history.append(d)
                         self.redraw()
 
                 elif key == curses.KEY_UP:
@@ -243,7 +271,7 @@ class GrokCursesApp:
 
                 elif 32 <= key <= 126:  # Printable characters
                     current_input += chr(key)
-                    self.input_win.addch(key)
+                    self.input_win.addch(key, self.color_pair)
                     self.input_win.refresh()
 
             except KeyboardInterrupt:
