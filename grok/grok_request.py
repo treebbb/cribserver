@@ -1,10 +1,14 @@
 #! /usr/bin/env python3
 
-from openai import OpenAI
+import curses
+from curses import wrapper
+import json
 import os
 import sys
 import re
+import time
 from typing import List, Tuple
+from openai import OpenAI
 
 class GrokChat:
     MODEL = "grok-3"
@@ -17,46 +21,33 @@ class GrokChat:
             api_key=os.getenv("XAI_API_KEY"),
             base_url=self.ENDPOINT,
         )
-        self.conversation_history = []
-        # Create output directory if it doesn't exist
+        self.conversation_history = [] # list of dicts {role: x, content: x}
+        self.display_history = []  # For rendering in curses
         if not os.path.exists(self.OUTPUT_DIR):
             os.makedirs(self.OUTPUT_DIR)
 
-    def _process_file_content(self, line):
+    def _process_file_content(self, input_str):
         """Process lines starting with 'file:' to include file contents."""
-        if line.startswith('file:'):
-            filepath = line[5:].strip()
-            content = f"/* BEGIN {filepath} */\n"
-            content += open(filepath, 'r').read()
-            content += f"\n/* END {filepath} */"
-            return content
-        return line
+        result = ""
+        for line in input_str.splitlines():
+            if line.startswith('file:'):
+                filepath = line[5:].strip()
+                result = f"/* BEGIN {filepath} */\n"
+                result += open(filepath, 'r').read()
+                result += f"\n/* END {filepath} */"
+                result += "\n"
+            else:
+                result += line + "\n"
+        return result
 
     def _save_code_blocks_to_files(self, response: str, output_dir: str = "./") -> str:
-        """
-        Extract code blocks from the response, save them to files, and replace the code blocks
-        with the filenames in the response text.
-
-        ```python test.py
-        def hello():
-        print("Hello, World!")
-        ```
-        
-        Args:
-            response (str): The response text containing code blocks.
-            output_dir (str): Directory where the files will be saved. Defaults to current directory.
-        
-        Returns:
-            Tuple[str, List[str]]: A tuple containing the modified response text (with code blocks replaced by filenames)
-                                   and a list of saved file paths.
-        """
+        """Extract code blocks from response and save them to files."""
         code_block = []
         new_response = []
-        
+
         for line in response.splitlines():
             if line.startswith('```'):
                 if len(code_block) > 10:
-                    # write contents
                     filename = code_block[0].split()[-1]
                     filename = re.sub(r'[^a-z0-9._-]', '_', filename)
                     if not filename or filename.startswith('___'):
@@ -74,11 +65,9 @@ class GrokChat:
                     new_response.append(f'<code block {filepath}>')
                     code_block.clear()
                 elif code_block:
-                    # inline short blocks
                     new_response.extend(code_block)
                     code_block.clear()
                 else:
-                    # start code block
                     code_block.append(line)
             elif code_block:
                 code_block.append(line)
@@ -86,73 +75,189 @@ class GrokChat:
                 new_response.append(line)
         return '\n'.join(new_response)
 
-    def get_user_input(self):
-        """Prompt user for input until Ctrl-D is pressed."""
-        print("\nEnter your message (press Ctrl-D to finish, type 'exit' to quit):")
-        lines = []
-        try:
-            while True:
-                line = input()
-                processed_line = self._process_file_content(line)
-                lines.append(processed_line)
-        except EOFError:
-            return "\n".join(lines).strip()
-
     def query_grok(self):
         """Send the conversation history to the xAI Grok API and return the response."""
+        history = []
+        for request in self.conversation_history:
+            if request['role'] == 'user':
+                request = request.copy()
+                request['content'] = self._process_file_content(request['content'])
+            history.append(request)
+        filename = str(time.time()) + '_request.json'
+        filepath = os.path.join(self.OUTPUT_DIR, filename)
+        with open(filepath, 'w') as f:
+            json.dump(history, f, indent=2)
         try:
             completion = self.client.chat.completions.create(
                 model=self.MODEL,
-                messages=self.conversation_history,
+                messages=history,
                 temperature=0.7,
                 max_tokens=5000
             )
+            filename = str(time.time()) + '_response.json'
+            filepath = os.path.join(self.OUTPUT_DIR, filename)
+            #d = completion.to_dict()
+            #open(filepath + '.x', 'w').write(str(d))
+            with open(filepath, 'w') as f:
+                json.dump(completion.to_dict(), f, indent=2)
             return completion.choices[0].message.content
         except Exception as e:
             return f"Error: {str(e)}"
 
-    def run(self):
-        """Run the main conversation loop."""
-        # Check if API key is set
-        if not os.getenv("XAI_API_KEY"):
-            print("Error: XAI_API_KEY environment variable not set.")
-            sys.exit(1)
+class GrokCursesApp:
+    def __init__(self, stdscr, chat):
+        self.stdscr = stdscr
+        self.chat = chat
+        self.input_buffer = []
+        self.scroll_offset = 0
+        self.setup_windows()
 
-        print("Starting Grok conversation. Type 'exit' or press Ctrl-C to quit.")
+    def setup_windows(self):
+        """Set up the curses windows for input and output."""
+        self.stdscr.clear()
+        self.height, self.width = self.stdscr.getmaxyx()
 
-        while True:
-            # Get user input
-            prompt = self.get_user_input()
+        # Output window (top 3/4 of screen)
+        self.output_win_height = self.height - 5
+        self.output_win = curses.newwin(self.output_win_height, self.width, 0, 0)
+        self.output_win.scrollok(True)
 
-            # Check for exit condition
-            if prompt.lower() == "exit" or not prompt:
-                print("Exiting conversation.")
+        # Input window (bottom part of screen)
+        self.input_win = curses.newwin(5, self.width, self.height - 5, 0)
+        self.input_win.scrollok(True)
+        self.input_win.addstr(0, 0, "Input (Ctrl+D to send, Ctrl+C to exit):")
+        self.input_win.refresh()
+
+    def resize_windows(self):
+        """Handle window resizing."""
+        self.height, self.width = self.stdscr.getmaxyx()
+        self.output_win_height = self.height - 5
+        self.output_win.resize(self.output_win_height, self.width)
+        self.input_win.resize(5, self.width)
+        self.input_win.mvwin(self.height - 5, 0)
+        self.redraw()
+
+    def redraw(self):
+        """Redraw the output window content with line wrapping."""
+        self.output_win.clear()
+        visible_lines = self.output_win_height - 1
+        start_idx = max(0, len(self.chat.display_history) - visible_lines + self.scroll_offset)
+        end_idx = min(len(self.chat.display_history), start_idx + visible_lines)
+
+        max_width = self.width - 1  # Maximum width per line
+        current_row = 0  # Track current row in window
+
+        for line in self.chat.display_history[start_idx:end_idx]:
+            if current_row >= visible_lines:
                 break
 
-            # Add user message to conversation history
-            self.conversation_history.append({"role": "user", "content": prompt})
+            # Process the line with wrapping
+            while line and current_row < visible_lines:
+                if len(line) <= max_width:
+                    # Line fits entirely, display it
+                    try:
+                        self.output_win.addstr(current_row, 0, line)
+                        current_row += 1
+                    except curses.error:
+                        pass
+                    break
+                else:
+                    # Find split point
+                    split_pos = max_width
+                    # Look for a space within the last 20 characters
+                    search_start = max(0, max_width - 20)
+                    last_space = line[search_start:max_width].rfind(' ')
 
-            # Query the API with the full conversation history
-            response = self.query_grok()
+                    if last_space != -1:
+                        # Found a space, adjust split position
+                        split_pos = search_start + last_space
 
-            # Add assistant response to conversation history (before saving files)
-            self.conversation_history.append({"role": "assistant", "content": response})
+                    # Display the segment up to split_pos
+                    try:
+                        self.output_win.addstr(current_row, 0, line[:split_pos])
+                        current_row += 1
+                        # Move to next segment, skip the space if we split on one
+                        line = line[split_pos + 1 if last_space != -1 else split_pos:].lstrip()
+                    except curses.error:
+                        break
 
-            # Process response to save code blocks to files
-            response = self._save_code_blocks_to_files(response)
+        self.output_win.refresh()
 
-            # Print the response
-            print("\nGrok response:")
-            print(response)
+    def run(self):
+        """Run the main conversation loop with curses UI."""
+        curses.curs_set(1)  # Show cursor
+        self.input_win.move(1, 0)
+        current_input = ""
 
-def main():
-    """Entry point for the application."""
-    try:
-        chat = GrokChat()
-        chat.run()
-    except KeyboardInterrupt:
-        print("\nExiting conversation (Ctrl-C).")
-        sys.exit(0)
+        while True:
+            try:
+                key = self.input_win.getch()
+
+                if key == curses.KEY_RESIZE:
+                    self.resize_windows()
+
+                elif key == 4:  # Ctrl+D
+                    if current_input:
+                        self.chat.conversation_history.append({"role": "user", "content": current_input})
+                        self.chat.display_history.append("User: " + current_input)
+                        self.redraw()
+
+                        self.input_win.clear()
+                        self.input_win.addstr(0, 0, "Input (Ctrl+D to send, Ctrl+C to exit):")
+                        self.input_win.refresh()
+                        current_input = ""
+
+                        response = self.chat.query_grok()
+                        processed_response = self.chat._save_code_blocks_to_files(response)
+                        self.chat.conversation_history.append({"role": "assistant", "content": response})
+                        self.chat.display_history.append("Grok: " + processed_response)
+                        self.redraw()
+
+                elif key == curses.KEY_UP:
+                    self.scroll_offset += 1
+                    self.redraw()
+
+                elif key == curses.KEY_DOWN:
+                    self.scroll_offset -= 1
+                    if self.scroll_offset < 0:
+                        self.scroll_offset = 0
+                    self.redraw()
+
+                elif key == 10:  # Enter
+                    self.input_win.addstr("\n")
+                    current_input += "\n"
+                    self.input_win.refresh()
+
+                elif key == curses.KEY_BACKSPACE or key == 127:
+                    if current_input:
+                        current_input = current_input[:-1]
+                        y, x = self.input_win.getyx()
+                        if x == 0:
+                            y -= 1
+                            x = self.width - 1
+                        else:
+                            x -= 1
+                        self.input_win.move(y, x)
+                        self.input_win.delch()
+                        self.input_win.refresh()
+
+                elif 32 <= key <= 126:  # Printable characters
+                    current_input += chr(key)
+                    self.input_win.addch(key)
+                    self.input_win.refresh()
+
+            except KeyboardInterrupt:
+                break
+
+def main(stdscr):
+    """Entry point for the curses application."""
+    if not os.getenv("XAI_API_KEY"):
+        print("Error: XAI_API_KEY environment variable not set.")
+        sys.exit(1)
+
+    chat = GrokChat()
+    app = GrokCursesApp(stdscr, chat)
+    app.run()
 
 if __name__ == "__main__":
-    main()
+    wrapper(main)
