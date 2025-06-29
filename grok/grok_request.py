@@ -32,10 +32,15 @@ class GrokChat:
             return content
         return line
 
-    def _save_code_blocks_to_files(self, response: str, output_dir: str = "./") -> Tuple[str, List[str]]:
+    def _save_code_blocks_to_files(self, response: str, output_dir: str = "./") -> str:
         """
         Extract code blocks from the response, save them to files, and replace the code blocks
         with the filenames in the response text.
+
+        ```python test.py
+        def hello():
+        print("Hello, World!")
+        ```
         
         Args:
             response (str): The response text containing code blocks.
@@ -45,40 +50,41 @@ class GrokChat:
             Tuple[str, List[str]]: A tuple containing the modified response text (with code blocks replaced by filenames)
                                    and a list of saved file paths.
         """
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-    
-        saved_files = []
-        modified_response = response
-        code_block_pattern = re.compile(r'```(?:\w*)\s*\n([\s\S]*?)\n```', re.MULTILINE)
-        code_blocks = code_block_pattern.findall(response)
-        placeholder_index = 0
-    
-        for i, code_content in enumerate(code_blocks):
-            # Extract filename if provided in the code block header (e.g., ```python filename.py)
-            header_match = re.match(r'^\s*(\w+)\s+([^\n]+)\n', code_content)
-            if header_match:
-                _, filename = header_match.groups()
-                code_content = code_content[len(header_match.group(0)):]
+        code_block = []
+        new_response = []
+        
+        for line in response.splitlines():
+            if line.startswith('```'):
+                if len(code_block) > 10:
+                    # write contents
+                    filename = code_block[0].split()[-1]
+                    filename = re.sub(r'[^a-z0-9._-]', '_', filename)
+                    if not filename or filename.startswith('___'):
+                        for code_idx in range(100):
+                            filename = f'code_block_{code_idx}'
+                            filepath = os.path.join(self.OUTPUT_DIR, filename)
+                            if not os.path.exists(filepath):
+                                break
+                    else:
+                        filepath = os.path.join(self.OUTPUT_DIR, filename)
+                    with open(filepath, 'w') as f:
+                        for line in code_block[1:]:
+                            f.write(line)
+                            f.write('\n')
+                    new_response.append(f'<code block {filepath}>')
+                    code_block.clear()
+                elif code_block:
+                    # inline short blocks
+                    new_response.extend(code_block)
+                    code_block.clear()
+                else:
+                    # start code block
+                    code_block.append(line)
+            elif code_block:
+                code_block.append(line)
             else:
-                filename = f"code_block_{placeholder_index}.txt"
-                placeholder_index += 1
-    
-            filepath = os.path.join(output_dir, filename)
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(code_content.strip())
-            saved_files.append(filepath)
-    
-            # Replace the code block in the response with a reference to the saved file
-            code_block_full_match = re.search(r'```(?:\w*)\s*\n[\s\S]*?\n```', modified_response, re.MULTILINE)
-            if code_block_full_match:
-                modified_response = (
-                    modified_response[:code_block_full_match.start()] +
-                    f"[Code saved to: {filepath}]" +
-                    modified_response[code_block_full_match.end():]
-                )
-        return modified_response, saved_files
+                new_response.append(line)
+        return '\n'.join(new_response)
 
     def get_user_input(self):
         """Prompt user for input until Ctrl-D is pressed."""
@@ -133,7 +139,7 @@ class GrokChat:
             self.conversation_history.append({"role": "assistant", "content": response})
 
             # Process response to save code blocks to files
-            response, files = self._save_code_blocks_to_files(response)
+            response = self._save_code_blocks_to_files(response)
 
             # Print the response
             print("\nGrok response:")
