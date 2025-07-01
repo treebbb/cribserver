@@ -5,6 +5,7 @@ class Card:
     SUITS = ["Clubs", "Diamonds", "Hearts", "Spades"]
     SUIT_CHARS = [s[0] for s in SUITS]
     RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+    JACK_RANK = 11
 
     @staticmethod
     def get_rank(card_index: int) -> int:
@@ -24,14 +25,19 @@ class Card:
         => Clubs, Diamonds, etc.
         '''
         return Card.SUITS[card_index // 13]
+    
     @staticmethod
-
     def get_suit_char(card_index: int) -> str:
         '''
         => 'C', 'D', etc
         '''
         return Card.SUIT_CHARS[card_index // 13]
 
+    @staticmethod
+    def get_value(card_index: int) -> int:
+        rank = (card_index % 13) + 1
+        return max(rank, 10)
+    
     @staticmethod
     def to_string(card_index: int) -> str:
         rank = Card.get_rank_string(card_index)
@@ -73,6 +79,7 @@ class Deck:
     deal_to_piles(list_of_names, num_cards): deals from top of pile to each pile in the given list. e.g. if list_of_names=["A", "B"] and num_cards=3, then cards will be dealt to A,B,A,B,A,B
     play_card(card_idx, pile1, pile2): moves card from pile1 to pile2
     get_cards(name): returns a list of all cards in that named pile
+    drain_pile(pile_name): Moves all cards from the named pile to the "discard" pile.
     '''
     REMAINING = "remaining"
     DISCARD = "discard"
@@ -118,6 +125,13 @@ class Deck:
         for _ in range(num_cards):
             for name in names:
                 self.piles[name].append(self.piles[self.REMAINING].pop(0))
+
+    def drain_pile(self, pile_name):
+        '''
+        move all cards in pile to the discard pile
+        '''
+        self.piles[self.DISCARD].extend(self.piles[pile_name])
+        self.piles[pile_name].clear()
 
     def play_card(self, card_idx: int, pile1: str, pile2: str) -> None:
         if pile1 not in self.piles or pile2 not in self.piles:

@@ -1,3 +1,4 @@
+from enum import Enum
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -6,30 +7,62 @@ import os
 import random
 import uvicorn
 from .cards import Card, Deck
-from .cribbage import score_play_phase, score_show_phase, simulate_play_sequences
+from .cribbage import score_play_phase, score_show_phase
 
 # Initialize FastAPI app
 app = FastAPI(title="Cribbage Game Server")
+
+class CribbagePhase(Enum):
+    JOIN = 1
+    DEAL = 2
+    DISCARD = 3
+    FLIP_STARTER = 4
+    COUNT = 5
+    SHOW = 6
+    CRIB = 7
 
 # Pydantic models
 class Player(BaseModel):
     player_id: str
     name: str
-    hand: List[Card] = []
     score: int = 0
-    discarded: List[Card] = []  # Track discarded cards for crib
 
-class GameState(BaseModel):
+class GameState:
     game_id: str
     players: List[Player]
-    deck: List[Card]
-    starter: Optional[Card] = None
+    deck: Deck
     dealer: Optional[str] = None  # player_id of dealer
     current_turn: Optional[str] = None
-    played_cards: List[Card] = []
     current_total: int = 0
-    show_phase: bool = False
-    crib: List[Card] = []  # Cards discarded to crib
+    phase: CribbagePhase
+
+class PlayerState(BaseModel):
+    game_id: str
+    players: List[Player]
+    visible_piles: Optional[Dict[str, List[int]]] = None
+    dealer: Optional[str] = None
+    current_turn: Optional[str] = None
+    current_total: int = 0
+    phase: CribbagePhase
+
+    @classmethod
+    def from_game_state(cls, game, player_id):
+        deck = game.deck
+        visible_piles = {
+            pile_name: game.deck.get_cards(pile_name)
+            for pile_name in ("starter", player_id)
+            if game.deck.get_cards(pile_name) is not None
+        } if game.deck.get_cards("starter") or game.deck.get_cards(player_id) else None        
+        result = cls(
+            game_id = game.game_id,
+            players = game.players.copy(),
+            dealer = game.dealer,
+            current_turn = game.current_turn,
+            current_total = game.current_total,
+            phase = game.phase,
+            visible_piles = visible_piles
+            )
+        return result
 
 class JoinRequest(BaseModel):
     player_id: str
@@ -37,22 +70,15 @@ class JoinRequest(BaseModel):
 
 class PlayRequest(BaseModel):
     player_id: str
-    card: Card
+    card_idx: int
 
 class DiscardRequest(BaseModel):
     player_id: str
-    cards: List[Card]
+    card_indices: List[int]
 
 class GoRequest(BaseModel):
     player_id: str
     
-class SimulateRequest(BaseModel):
-    player_id: str
-    hand: List[Card]
-    used_cards: List[Card]
-    dealer: bool
-    num_simulations: int = 576
-
 # In-memory game state
 games: Dict[str, GameState] = {}
 player_stats: Dict[str, Dict] = {}
@@ -85,13 +111,10 @@ async def join_game(game_id: str, request: JoinRequest):
             game_id=game_id,
             players=[],
             deck=Deck(),
-            starter=None,
             dealer=None,
             current_turn=None,
-            played_cards=[],
             current_total=0,
-            show_phase=False,
-            crib=[]
+            phase=CribbagePhase.JOIN,
         )
     
     game = games[game_id]
@@ -101,15 +124,23 @@ async def join_game(game_id: str, request: JoinRequest):
         raise HTTPException(status_code=400, detail="Player already in game")
     
     game.players.append(Player(player_id=request.player_id, name=request.name))
+
     
-    # Deal 6 cards to each player and set starter when 2 players join
+    # Deal 6 cards to each player and set starter when 2 players join    
     if len(game.players) == 2:
-        random.shuffle(game.deck)  # Ensure deck is shuffled
+        # initialize game and deck
+        game.phase = CribbagePhase.DEAL
+        deck = game.deck
+        deck.create_pile("starter")
+        deck.create_pile("crib")
+        deck.create_pile("phase1")
+        deck.shuffle()
         for player in game.players:
-            player.hand = [game.deck.pop() for _ in range(6)]
-        game.starter = game.deck.pop()
+            deck.create_pile(player.player_id)
+        deck.deal_to_piles([p.player_id for p in game.players], 6)
         game.dealer = game.players[0].player_id
         game.current_turn = game.players[1].player_id  # Non-dealer starts discard phase
+        game.phase = CribbagePhase.DISCARD
     
     # Update player stats
     if request.player_id not in player_stats:
@@ -127,35 +158,37 @@ async def discard_cards(game_id: str, request: DiscardRequest):
         raise HTTPException(status_code=404, detail="Game not found")
     
     game = games[game_id]
-    if game.show_phase:
-        raise HTTPException(status_code=400, detail="Cannot discard in show phase")
+    deck = game.deck
+    if game.phase != CribbagePhase.DISCARD:
+        raise HTTPException(status_code=400, detail="Can only discard in DISCARD phase")
     
     player = next((p for p in game.players if p.player_id == request.player_id), None)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
-    if len(request.cards) != 2:
+    if len(request.card_indices) != 2:
         raise HTTPException(status_code=400, detail="Must discard exactly 2 cards")
-    if any(card not in player.hand for card in request.cards):
+    if any(card not in deck.get_cards(player.player_id) for card in request.card_indices):
         raise HTTPException(status_code=400, detail="Cards not in hand")
     
     # Move cards to crib
-    for card in request.cards:
-        player.hand.remove(card)
-        player.discarded.append(card)
-        game.crib.append(card)
+    for card_idx in request.card_indices:
+        deck.play_card(card_idx, player.player_id, "crib")
     
     # Check if both players have discarded
-    if all(len(p.discarded) == 2 for p in game.players):
-        game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)  # Non-dealer (player 1) starts play phase
-    
+    if len(deck.get_cards("crib")) == 4:
+        # flip starter card
+        deck.deal_to_pile("starter")
+        # Non-dealer (player 1) starts play phase        
+        game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)
     return {"status": "discarded", "player_id": request.player_id}
 
-@app.get("/games/{game_id}/state")
-async def get_game_state(game_id: str):
+@app.get("/games/{game_id}/{player_id}/state")
+async def get_game_state(game_id: str, player_id: str):
     """Get current game state."""
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
-    return games[game_id]
+    game = games[game_id]
+    return PlayerState.from_game_state(game, player_id)
 
 @app.post("/games/{game_id}/play")
 async def play_card(game_id: str, request: PlayRequest):
@@ -164,7 +197,8 @@ async def play_card(game_id: str, request: PlayRequest):
         raise HTTPException(status_code=404, detail="Game not found")
     
     game = games[game_id]
-    if game.show_phase:
+    deck = game.deck
+    if game.phase != CribbagePhase.COUNT:
         raise HTTPException(status_code=400, detail="In show phase, cannot play cards")
     if request.player_id != game.current_turn:
         raise HTTPException(status_code=400, detail="Not your turn")
@@ -174,61 +208,56 @@ async def play_card(game_id: str, request: PlayRequest):
         raise HTTPException(status_code=404, detail="Player not found")
     
     # Convert request.card to Card object
-    card = Card(**request.card.dict())  # Ensure it's a Card instance
-    if card not in player.hand:
+    card_idx = request.card_idx
+    if card_idx not in deck.get_cards(request.player_id):
         raise HTTPException(status_code=400, detail="Card not in hand")
     if game.current_total + card.value() > 31:
         raise HTTPException(status_code=400, detail="Card exceeds 31")
     
     # Play card
-    player.hand.remove(card)
-    game.played_cards.append(card)
-    game.current_total += card.value()
-    player.score += score_play_phase(game.played_cards[:-1], card)
+    deck.play_card(card_idx, request.player_id, "phase1")
+    game.current_total += Card.value(card_idx)
+    player.score += score_play_phase(deck.get_cards("phase1"))
     
     # Check for Go
     next_player = game.players[(game.players.index(player) + 1) % 2]
-    next_valid = any(c.value() + game.current_total <= 31 for c in next_player.hand)
-    if not next_valid and not any(c.value() + game.current_total <= 31 for c in player.hand):
+    next_valid = any(c.value() + game.current_total <= 31 for c in deck.get_cards(next_player.player_id))
+    if not next_valid and not any(c.value() + game.current_total <= 31 for c in deck.get_cards(player.player_id)):
         player.score += 1  # Go point
         game.current_total = 0
-        game.played_cards = []
+        deck.drain_pile("phase1")
     
     # Advance turn or move to show phase
-    if not any(p.hand for p in game.players):
-        game.show_phase = True
+    if not any(deck.get_cards(p.player_id) for p in game.players):
+        game.phase = CribbagePhase.SHOW
         # Score show phase
         for p in game.players:
-            p.score += score_show_phase(p.hand, game.starter, is_crib=False)
+            p.score += score_show_phase(deck.get_cards(p.player_id), deck.get_cards("starter")[0], is_crib=False)
         if game.dealer:
             dealer = next(p for p in game.players if p.player_id == game.dealer)
-            dealer.score += score_show_phase(game.crib, game.starter, is_crib=True)
+            dealer.score += score_show_phase(deck.get_cards("crib"), deck.get_cards("starter")[0], is_crib=True)
         # Determine winner
         winner = max(game.players, key=lambda p: p.score)
         player_stats[winner.player_id]["wins"] += 1
-        saveV
         save_stats()
         # Reset game
         games[game_id] = GameState(
             game_id=game_id,
             players=[],
-            deck=create_deck(),
-            starter=None,
+            deck=Deck(),
             dealer=None,
             current_turn=None,
-            played_cards=[],
             current_total=0,
-            show_phase=False,
-            crib=[]
+            phase=CribbagePhase.DISCARD,
         )
         return {"status": "game_over", "winner": winner.player_id}
     
     game.current_turn = next_player.player_id if next_valid else player.player_id
     if game.current_total == 31:
         game.current_total = 0
-        game.played_cards = []
+        deck.drain_pile("phase1")
     
-    return {"status": "played", "card": card.dict()}  # Return card as dict to avoid serialization issues
+    return {"status": "played", "card": card_idx}
 
 @app.post("/games/{game_id}/go")
 async def go(game_id: str, request: GoRequest):
@@ -237,8 +266,9 @@ async def go(game_id: str, request: GoRequest):
         raise HTTPException(status_code=404, detail="Game not found")
     
     game = games[game_id]
-    if game.show_phase:
-        raise HTTPException(status_code=400, detail="In show phase, cannot call Go")
+    deck = game.deck
+    if game.phase != CribbagePhase.COUNT:
+        raise HTTPException(status_code=400, detail="Cannot call Go outside COUNT phase")
     if request.player_id != game.current_turn:
         raise HTTPException(status_code=400, detail="Not your turn")
     
@@ -247,42 +277,38 @@ async def go(game_id: str, request: GoRequest):
         raise HTTPException(status_code=404, detail="Player not found")
     
     # Check if player has valid moves
-    if any(c.value() + game.current_total <= 31 for c in player.hand):
+    if any(Card.value(c) + game.current_total <= 31 for c in deck.get_cards(player.player_id)):
         raise HTTPException(status_code=400, detail="You have playable cards")
     
     # Award Go point to opponent if they can play
     next_player = game.players[(game.players.index(player) + 1) % 2]
-    next_valid = any(c.value() + game.current_total <= 31 for c in next_player.hand)
+    next_valid = any(Card.value(c) + game.current_total <= 31 for c in deck.get_cards(next_player.player_id))
     if next_valid:
         next_player.score += 1  # Go point to opponent
         game.current_turn = next_player.player_id
     else:
         player.score += 1  # Go point if both cannot play
         game.current_total = 0
-        game.played_cards = []
+        deck.drain_pile("phase1")
     
     # Check if play phase is over
-    if not any(p.hand for p in game.players):
-        game.show_phase = True
+    if not any(get_cards(p.player_id) for p in game.players):
+        game.phase = CribbagePhase.SHOW
         for p in game.players:
-            p.score += score_show_phase(p.hand, game.starter, is_crib=False)
+            p.score += score_show_phase(deck.get_cards(p.player_id), deck.get_cards("starter")[0], is_crib=False)
         if game.dealer:
             dealer = next(p for p in game.players if p.player_id == game.dealer)
-            dealer.score += score_show_phase(game.crib, game.starter, is_crib=True)
+            dealer.score += score_show_phase(deck.get_cards("crib"), deck.get_cards("starter")[0], is_crib=True)
         winner = max(game.players, key=lambda p: p.score)
         player_stats[winner.player_id]["wins"] += 1
         save_stats()
         games[game_id] = GameState(
             game_id=game_id,
             players=[],
-            deck=create_deck(),
-            starter=None,
+            deck=Deck(),
             dealer=None,
             current_turn=None,
-            played_cards=[],
             current_total=0,
-            show_phase=False,
-            crib=[]
         )
         return {"status": "game_over", "winner": winner.player_id}
     
@@ -301,35 +327,6 @@ async def get_player_stats(player_id: str):
     if player_id not in player_stats:
         raise HTTPException(status_code=404, detail="Player not found")
     return player_stats[player_id]
-
-@app.post("/games/{game_id}/simulate")
-async def simulate_discards(game_id: str, request: SimulateRequest):
-    """Simulate discards and return top 5 kitties with average scores."""
-    if game_id not in games:
-        raise HTTPException(status_code=404, detail="Game not found")
-    if len(request.hand) != 6:
-        raise HTTPException(status_code=400, detail="Hand must have 6 cards")
-    
-    game = games[game_id]
-    results = simulate_play_sequences(
-        hand=[Card(**c) for c in request.hand],  # Convert to Card objects
-        starter=game.starter,
-        used_cards=[Card(**c) for c in request.used_cards],
-        dealer=request.dealer,
-        num_simulations=request.num_simulations
-    )
-    return {
-        "top_discards": [
-            {
-                "kitty": [card.dict() for card in kitty],  # Convert back to dict for JSON response
-                "avg_play_score": play,
-                "avg_show_score": show,
-                "avg_crib_score": crib if request.dealer else None,
-                "avg_total_score": total
-            }
-            for kitty, play, show, crib, total in results
-        ]
-    }
 
 def run_server():
     """Run the FastAPI server with uvicorn."""
