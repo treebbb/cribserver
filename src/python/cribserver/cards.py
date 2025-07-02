@@ -146,3 +146,10 @@ class Deck:
             raise ValueError(f"Pile {name} does not exist")
         return self.piles[name].copy()
 
+    def copy_existing_piles(self, pile_names: List[str], dest_piles: Dict):
+        '''
+        copy piles if they exist. If not, ignore
+        '''
+        for pile_name in pile_names:
+            if pile_name in self.piles:
+                dest_piles[pile_name] = self.piles[pile_name].copy()

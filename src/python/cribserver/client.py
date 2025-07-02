@@ -3,12 +3,18 @@ import requests
 import time
 import json
 from typing import List, Optional
-from .cards import Card
 import threading
 import sys
+from .cards import Card
+from .api_model import Player, GameState, GameListItem, PlayerState, JoinRequest, PlayRequest, DiscardRequest, GoRequest, CribbagePhase
 
 
 # In src/python/cribserver/client.py
+
+GAME_ID = "FIRST_GAME"
+
+def display_pile(card_indices):
+    return ' '.join(Card.to_string(card_idx) for card_idx in card_indices)
 
 class CribbageClient:
     def __init__(self, stdscr, server_url: str, player_id: str, player_name: str, game_id: str):
@@ -16,9 +22,17 @@ class CribbageClient:
         self.server_url = server_url.rstrip('/')
         self.player_id = player_id
         self.player_name = player_name
-        self.game_id = game_id
-        self.player_state = None
-        self.scores = {}  # Cache scores
+        self.game_id = GAME_ID
+        self.player_state = PlayerState(
+            game_id=GAME_ID,
+            players=[],
+            visible_piles={},
+            is_dealer=False,
+            my_turn=False,
+            phase=CribbagePhase.JOIN,
+            )
+            
+            
         self.message = "Joining game..."
         self.input_buffer = ""
         self.running = True
@@ -39,100 +53,116 @@ class CribbageClient:
         self.polling_thread = threading.Thread(target=self.poll_state, daemon=True)
         self.polling_thread.start()
 
+    def get_me(self):
+        if self.player_state is None or self.player_state.players is None:
+            return None
+        me = next((p for p in self.player_state.players if p.player_id == self.player_id), None)
+        return me
+    
+    def get_opponent(self):
+        if self.player_state is None or self.player_state.players is None:
+            return None
+        opponent = next((p for p in self.player_state.players if p.player_id != self.player_id), None)
+        return opponent
+
+    def get_my_hand(self):
+        if self.player_state is None or self.player_state.players is None:
+            return []
+        return self.player_state.visible_piles.get(self.player_id, [])
+
     def join_game(self):
         """Join the game on the server."""
         try:
+            request=JoinRequest(
+                player_id=self.player_id,
+                name=self.player_name,
+                )
             response = requests.post(
                 f"{self.server_url}/games/{self.game_id}/join",
-                json={"player_id": self.player_id, "name": self.player_name}
+                json=request.dict(),
             )
             response.raise_for_status()
-            data = response.json()
-            self.message = f"Joined game! Players: {data['player_count']}/2"
-            if data["player_count"] == 2:
+            self.player_state = PlayerState(**response.json())
+            self.message = f"Joined game! Players: {len(self.player_state.players)}"
+            if self.player_state.phase == CribbagePhase.DISCARD:
                 self.message += " Game started, check your hand."
         except requests.RequestException as e:
             self.message = f"Error joining game: {str(e)}"
 
     def poll_state(self):
-        """Poll server for game state and scores every 1.5 seconds."""
+        """Poll server for player state."""
         while self.running:
             try:
                 # Get game state
                 response = requests.get(f"{self.server_url}/games/{self.game_id}/{self.player_id}/state")
                 response.raise_for_status()
-                self.player_state = response.json()
-                '''
-                # Get scores
-                response = requests.get(f"{self.server_url}/games/{self.game_id}/score")
-                response.raise_for_status()
-                self.scores = response.json()
-                '''
-                self.scores = {}
+                response_dict = response.json()
+                self.player_state = PlayerState(**response_dict)
+                json.dump(response_dict, open('x.json', 'w'))
             except requests.RequestException as e:
                 self.message = f"Server error: {str(e)}"
-            time.sleep(1.5)
+            time.sleep(5)
 
-    def discard_cards(self, card_indices: List[int]):
+    def discard_cards(self, card_idx1: int, card_idx2: int):
         """Send discard request to server."""
-        if not self.player_state or "players" not in self.player_state:
-            self.message = "Game state not loaded"
+        if self.player_state.phase != CribbagePhase.DISCARD:
+            self.message = "Game phase is not DISCARD"
             return
-        player = next((p for p in self.player_state["players"] if p["player_id"] == self.player_id), None)
-        if not player or len(card_indices) != 2:
-            self.message = "Invalid discard selection"
+        me = self.get_me()
+        if not me:
+            self.message = "You're not in the game"
             return
-        cards = [player["hand"][i] for i in card_indices if i < len(player["hand"])]
-        if len(cards) != 2:
-            self.message = "Select exactly 2 cards"
+        if card_idx1 < 0 or card_idx2 > 51 or card_idx2 < 0 or card_idx2 > 51:
+            self.message = "Invalid card selection"
+            return
+        mypile = self.player_state.visible_piles[self.player_id]
+        if card_idx1 not in mypile or card_idx2 not in mypile:
+            self.message = "cards not in your hand"
             return
         try:
+            request = DiscardRequest(
+                player_id=self.player_id,
+                card_indices=[card_idx1, card_idx2],
+                )
             response = requests.post(
                 f"{self.server_url}/games/{self.game_id}/discard",
-                json={"player_id": self.player_id, "cards": cards}
+                json=request.dict(),
             )
             response.raise_for_status()
             self.message = "Cards discarded"
         except requests.RequestException as e:
             self.message = f"Error discarding: {str(e)}"
 
-    def call_go(self):
-        """Send Go request to server when player cannot play a card."""
-        if not self.player_state or "players" not in self.player_state:
-            self.message = "Game state not loaded"
-            return
-        if self.player_state["current_turn"] != self.player_id:
-            self.message = "Not your turn!"
-            return
-        try:
-            response = requests.post(
-                f"{self.server_url}/games/{self.game_id}/go",
-                json={"player_id": self.player_id}
-            )
-            response.raise_for_status()
-            self.message = "Called Go"
-        except requests.RequestException as e:
-            self.message = f"Error calling Go: {str(e)}"            
-
-    def play_card(self, card_index: int):
+    def play_card(self, card_idx: int):
         """Send play request to server."""
-        if not self.player_state or "players" not in self.player_state:
+        if not self.player_state:
             self.message = "Game state not loaded"
             return
-        player = next((p for p in self.player_state["players"] if p["player_id"] == self.player_id), None)
-        if not player or card_index >= len(player["hand"]):
+        if self.player_state.phase != CribbagePhase.COUNT:
+            self.message = "Can't play card, not in COUNT phase"
+            return
+        if self.get_me() is None:
+            self.message = "You are not in the game"
+            return
+        mypile = self.player_state.visible_piles[self.player_id]
+        if card_idx not in mypile:
             self.message = "Invalid card selection"
             return
-        card = player["hand"][card_index]
         try:
+            request = PlayRequest(
+                player_id=self.player_id,
+                card_idx=card_idx,
+                )
             response = requests.post(
                 f"{self.server_url}/games/{self.game_id}/play",
-                json={"player_id": self.player_id, "card": card}
+                json=request.dict(),
             )
             response.raise_for_status()
-            result = response.json()
-            if result["status"] == "game_over":
-                self.message = f"Game over! Winner: {result['winner']}"
+            self.player_state = PlayerState(**response.json())
+            if self.player_state.phase == CribbagePhase.DONE:
+                self.message = f"Game over! "
+                self.message += f"Your Score: {get_me().score} "
+                self.message += f"Opponent: {get_opponent().score} "
             else:
                 self.message = f"Played {card['rank']} of {card['suit']}"
         except requests.RequestException as e:
@@ -155,39 +185,39 @@ class CribbageClient:
         self.stdscr.addstr(1, 0, f"Player: {self.player_name} ({self.player_id})")
     
         # Scores
-        score_str = "Scores: " + ", ".join(f"{pid}: {score}" for pid, score in self.scores.items())
+        score_str = "Scores: " + ", ".join(f"{p.name}: {p.score}" for p in self.player_state.players)
         self.stdscr.addstr(2, 0, score_str)
     
         # Starter card (only show after both players discard)
         starter_pile = self.player_state.visible_piles.get("starter", [])
         if self.player_state and len(starter_pile) == 1:
-            starter = starter_pile.get_cards()[0]
-            color = curses.color_pair(1) if starter.suit in [Suit.HEARTS, Suit.DIAMONDS] else curses.color_pair(2)
-            self.stdscr.addstr(4, 0, f"Starter: {Card.to_string(starter)}", color)
+            starter = starter_pile[0]
+            self.stdscr.addstr(4, 0, f"Starter: {display_pile(starter_pile)}")
     
         # Played cards and running total
         phase1_pile = self.player_state.visible_piles.get("phase1", [])
+        phase1_total = sum(Card.get_value(c) for c in phase1_pile)
         if self.player_state and len(phase1_pile) > 0:
-            pile = ", ".join(Card(**c).to_display() for c in self.player_state["played_cards"])
-            self.stdscr.addstr(5, 0, f"Played: {pile} (Total: {self.player_state['current_total']})")
+            self.stdscr.addstr(5, 0, f"Played: {display_pile(phase1_pile)} (Total: {phase1_total}")
     
         # Player's hand
-        if self.player_state and "players" in self.player_state:
-            player = next((p for p in self.player_state["players"] if p["player_id"] == self.player_id), None)
-            if player and player["hand"]:
+        me = self.get_me()
+        if me is not None:
+            my_hand = self.get_my_hand()
+            if my_hand:
                 self.stdscr.addstr(7, 0, "Your Hand:")
-                for i, card in enumerate(player["hand"]):
-                    card_obj = Card(**card)
-                    color = curses.color_pair(1) if card_obj.suit in [Suit.HEARTS, Suit.DIAMONDS] else curses.color_pair(2)
-                    self.stdscr.addstr(8 + i, 0, f"{i+1}: {card_obj.to_display()}", color)
+                for i, card_idx in enumerate(my_hand):
+                    self.stdscr.addstr(8 + i, 0, f"{i+1}: {Card.to_string(card_idx)}")
     
         # Input prompt (discard or play phase)
-        if self.player_state and all(len(p["discarded"]) == 2 for p in self.player_state["players"]) and not self.player_state["show_phase"]:
-            prompt = f"{'Your turn!' if self.player_state['current_turn'] == self.player_id else 'Waiting for opponent...'} Enter card number to play (e.g., '1'), 'q' to quit: "
-        else:
-            prompt = "Enter two card numbers to discard (e.g., '1 2'), 'q' to quit: "
-        self.stdscr.addstr(height - 2, 0, prompt)
-        self.stdscr.addstr(height - 1, 0, self.input_buffer)
+        if self.player_state.phase == CribbagePhase.COUNT:
+            prompt = f"{'Your turn!' if self.player_state.my_turn else 'Waiting for opponent...'} Enter card to play (e.g., 'JH'), 'q' to quit: "
+            self.stdscr.addstr(height - 2, 0, prompt)
+            self.stdscr.addstr(height - 1, 0, self.input_buffer)
+        elif self.player_state.phase == CribbagePhase.DISCARD:
+            prompt = "Enter two cards to play (e.g., '3C 9H'), 'q' to quit: "
+            self.stdscr.addstr(height - 2, 0, prompt)
+            self.stdscr.addstr(height - 1, 0, self.input_buffer)
     
         # Messages
         message_lines = self.message.split("\n")
@@ -202,31 +232,40 @@ class CribbageClient:
             try:
                 self.draw()
                 key = self.stdscr.getch()
+                if key >= 32 and key < 128:
+                    keychar = chr(key)
+                else:
+                    keychar = None
                 if key == -1:  # No input
                     continue
                 if key == ord('q'):
                     self.running = False
-                elif key in range(ord('0'), ord('9') + 1):
-                    self.input_buffer += chr(key)
+                elif key in range(ord('0'), ord('9') + 1) or keychar in ('C', 'D', 'H', 'S', 'A', 'J', 'Q', 'K'):
+                    self.input_buffer += keychar
                 elif key == ord(' '):
                     self.input_buffer += " "
+                elif key == ord('P'):
+                    self.poll_state()
                 elif key == ord('\n'):
                     if self.input_buffer.strip():
                         # Discard phase: expect two numbers
-                        if self.player_state and not all(len(p["discarded"]) == 2 for p in self.player_state["players"]):
-                            numbers = [int(n) - 1 for n in self.input_buffer.strip().split()]
-                            if len(numbers) == 2:
-                                self.discard_cards(numbers)
+                        if self.player_state.phase == CribbagePhase.DISCARD:
+                            card_names = self.input_buffer.strip().split()
+                            if len(card_names) == 2:
+                                card_idx1 = Card.from_string(card_names[0])
+                                card_idx2 = Card.from_string(card_names[1])
+                                self.discard_cards(card_idx1, card_idx2)
                             else:
                                 self.message = "Please select exactly 2 cards to discard"
                         # Play phase: expect one number
-                        elif self.player_state and all(len(p["discarded"]) == 2 for p in self.player_state["players"]) and not self.player_state["show_phase"]:
-                            if self.player_state["current_turn"] == self.player_id:
-                                if self.input_buffer.strip() == 'g':
-                                    self.call_go()
+                        elif self.player_state.phase == CribbagePhase.COUNT:
+                            if self.player_state.my_turn:
                                 try:
-                                    card_index = int(self.input_buffer.strip()) - 1
-                                    self.play_card(card_index)
+                                    card_names = self.input_buffer.strip().split()
+                                    if len(card_names) == 1:
+                                        card_idx1 = Card.from_string(card_names[0])
+                                    self.play_card(card_idx1)
+                                    self.message = f"Played {Card.to_string(card_idx1)}"
                                 except ValueError:
                                     self.message = "Invalid card number"
                             else:
