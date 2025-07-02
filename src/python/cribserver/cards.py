@@ -36,7 +36,7 @@ class Card:
     @staticmethod
     def get_value(card_index: int) -> int:
         rank = (card_index % 13) + 1
-        return max(rank, 10)
+        return min(rank, 10)
     
     @staticmethod
     def to_string(card_index: int) -> str:

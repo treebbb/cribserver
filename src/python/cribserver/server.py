@@ -122,7 +122,7 @@ async def discard_cards(game_id: str, request: DiscardRequest):
     return GameListItem.from_game_state(game)
 
 @app.post("/games/{game_id}/play")
-async def play_card(game_id: str, request: PlayRequest):
+async def play_card(game_id: str, request: PlayRequest, response_model=PlayerState):
     """Play a card in the count phase."""
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -130,8 +130,10 @@ async def play_card(game_id: str, request: PlayRequest):
     game = games[game_id]
     deck = game.deck
     if game.phase != CribbagePhase.COUNT:
+        print("1")
         raise HTTPException(status_code=400, detail="In show phase, cannot play cards")
     if request.player_id != game.current_turn:
+        print("2")
         raise HTTPException(status_code=400, detail="Not your turn")
     
     player = next((p for p in game.players if p.player_id == request.player_id), None)
@@ -141,9 +143,10 @@ async def play_card(game_id: str, request: PlayRequest):
     # Convert request.card to Card object
     card_idx = request.card_idx
     if card_idx not in deck.get_cards(request.player_id):
+        print("3")
         raise HTTPException(status_code=400, detail="Card not in hand")
     if game.phase1_total() + Card.get_value(card_idx) > 31:
-        #!!! move this check to Game
+        print("4")
         raise HTTPException(status_code=400, detail="Card exceeds 31")
     
     # Play card
@@ -172,13 +175,13 @@ async def play_card(game_id: str, request: PlayRequest):
         save_stats()
         # Reset game
         game.phase = CribbagePhase.DONE
-        return {"status": "game_over", "winner": winner.player_id}
+        return PlayerState.from_game_state(game)
     
     game.current_turn = next_player.player_id if next_valid else player.player_id
     if game.phase1_total() == 31:
         deck.drain_pile("phase1")
     
-    return {"status": "played", "card": card_idx}
+    return PlayerState.from_game_state(game, request.player_id)
 
 @app.get("/players/{player_id}/stats")
 async def get_player_stats(player_id: str):

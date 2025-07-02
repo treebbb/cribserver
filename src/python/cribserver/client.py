@@ -70,6 +70,12 @@ class CribbageClient:
             return []
         return self.player_state.visible_piles.get(self.player_id, [])
 
+    def phase1_pile_total(self):
+        if self.player_state.phase != CribbagePhase.COUNT:
+            return 0
+        card_indices = self.player_state.visible_piles.get("phase1", [])
+        return sum(Card.get_value(c) for c in card_indices)
+
     def join_game(self):
         """Join the game on the server."""
         try:
@@ -164,7 +170,7 @@ class CribbageClient:
                 self.message += f"Your Score: {get_me().score} "
                 self.message += f"Opponent: {get_opponent().score} "
             else:
-                self.message = f"Played {card['rank']} of {card['suit']}"
+                self.message = f"Played {Card.to_string(card_idx)}"
         except requests.RequestException as e:
             self.message = f"Error playing card: {str(e)}"
 
@@ -195,10 +201,10 @@ class CribbageClient:
             self.stdscr.addstr(4, 0, f"Starter: {display_pile(starter_pile)}")
     
         # Played cards and running total
-        phase1_pile = self.player_state.visible_piles.get("phase1", [])
-        phase1_total = sum(Card.get_value(c) for c in phase1_pile)
-        if self.player_state and len(phase1_pile) > 0:
-            self.stdscr.addstr(5, 0, f"Played: {display_pile(phase1_pile)} (Total: {phase1_total}")
+        if self.player_state.phase == CribbagePhase.COUNT:
+            phase1_pile = self.player_state.visible_piles.get("phase1", [])
+            phase1_total = self.phase1_pile_total()
+            self.stdscr.addstr(5, 0, f"Played: {display_pile(phase1_pile)} (Total: {phase1_total})")
     
         # Player's hand
         me = self.get_me()
@@ -264,10 +270,12 @@ class CribbageClient:
                                     card_names = self.input_buffer.strip().split()
                                     if len(card_names) == 1:
                                         card_idx1 = Card.from_string(card_names[0])
-                                    self.play_card(card_idx1)
-                                    self.message = f"Played {Card.to_string(card_idx1)}"
-                                except ValueError:
-                                    self.message = "Invalid card number"
+                                        self.play_card(card_idx1)
+                                        self.message = f"Played {Card.to_string(card_idx1)}"
+                                    else:
+                                        self.message = "Play exactly one card"
+                                except ValueError as e:
+                                    self.message = f"Invalid card number: {e}"
                             else:
                                 self.message = "Not your turn!"
                         self.input_buffer = ""
