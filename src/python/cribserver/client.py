@@ -31,8 +31,8 @@ class CribbageClient:
             my_turn=False,
             phase=CribbagePhase.JOIN,
             )
-            
-            
+
+
         self.message = "Joining game..."
         self.input_buffer = ""
         self.running = True
@@ -42,7 +42,7 @@ class CribbageClient:
         curses.curs_set(0)  # Hide cursor
         curses.start_color()
         curses.use_default_colors()  # Use terminal's default colors
-        curses.init_color(0, 0, 0, 0)  # overrides Terminal palette for background. (background, R,G,B)        
+        curses.init_color(0, 0, 0, 0)  # overrides Terminal palette for background. (background, R,G,B)
         self.stdscr.bkgd(' ', curses.color_pair(0))  # Set background to black
         curses.init_pair(1, curses.COLOR_RED, -1)    # Hearts/Diamonds (red on default bg)
         curses.init_pair(2, curses.COLOR_BLACK, -1)  # Clubs/Spades (black on default bg)
@@ -58,7 +58,7 @@ class CribbageClient:
             return None
         me = next((p for p in self.player_state.players if p.player_id == self.player_id), None)
         return me
-    
+
     def get_opponent(self):
         if self.player_state is None or self.player_state.players is None:
             return None
@@ -174,9 +174,6 @@ class CribbageClient:
         except requests.RequestException as e:
             self.message = f"Error playing card: {str(e)}"
 
-
-# In src/python/cribserver/client.py
-
     def draw(self):
         """Draw the game UI."""
         self.stdscr.clear()
@@ -185,27 +182,27 @@ class CribbageClient:
             self.stdscr.addstr(0, 0, "Terminal too small!")
             self.stdscr.refresh()
             return
-    
+
         # Header
         self.stdscr.addstr(0, 0, f"Cribbage Game: {self.game_id}")
         self.stdscr.addstr(1, 0, f"Player: {self.player_name} ({self.player_id})")
-    
+
         # Scores
         score_str = "Scores: " + ", ".join(f"{p.name}: {p.score}" for p in self.player_state.players)
         self.stdscr.addstr(2, 0, score_str)
-    
+
         # Starter card (only show after both players discard)
         starter_pile = self.player_state.visible_piles.get("starter", [])
         if self.player_state and len(starter_pile) == 1:
             starter = starter_pile[0]
             self.stdscr.addstr(4, 0, f"Starter: {display_pile(starter_pile)}")
-    
+
         # Played cards and running total
         if self.player_state.phase == CribbagePhase.COUNT:
             phase1_pile = self.player_state.visible_piles.get("phase1", [])
             phase1_total = self.phase1_pile_total()
             self.stdscr.addstr(5, 0, f"Played: {display_pile(phase1_pile)} (Total: {phase1_total})")
-    
+
         # Player's hand
         me = self.get_me()
         if me is not None:
@@ -214,7 +211,7 @@ class CribbageClient:
                 self.stdscr.addstr(7, 0, "Your Hand:")
                 for i, card_idx in enumerate(my_hand):
                     self.stdscr.addstr(8 + i, 0, f"{i+1}: {Card.to_string(card_idx)}")
-    
+
         # Input prompt (discard or play phase)
         if self.player_state.phase == CribbagePhase.COUNT:
             prompt = f"{'Your turn!' if self.player_state.my_turn else 'Waiting for opponent...'} Enter card to play (e.g., 'JH'), 'q' to quit: "
@@ -224,12 +221,20 @@ class CribbageClient:
             prompt = "Enter two cards to play (e.g., '3C 9H'), 'q' to quit: "
             self.stdscr.addstr(height - 2, 0, prompt)
             self.stdscr.addstr(height - 1, 0, self.input_buffer)
-    
+
         # Messages
         message_lines = self.message.split("\n")
         for i, line in enumerate(message_lines[:5]):
             self.stdscr.addstr(7 + i, 30, line[:width-31], curses.color_pair(3))
-    
+
+        # Game log (display up to 20 most recent lines on the right)
+        log_start_col = max(30, width - 40)  # Start at column 30 or ensure 40 chars max width
+        log_lines = self.player_state.game_log[-20:]  # Get last 20 lines
+        for i, line in enumerate(log_lines):
+            if i + 7 < height:  # Ensure we don't exceed screen height
+                truncated_line = line[:width - log_start_col - 1]  # Truncate to fit
+                self.stdscr.addstr(7 + i, log_start_col, truncated_line)
+
         self.stdscr.refresh()
 
     def run(self):

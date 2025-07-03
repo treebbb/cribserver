@@ -30,7 +30,7 @@ def save_stats():
 load_stats()
 
 # API Endpoints
-@app.get("/games", response_model=List[GameListItem])
+@app.get("/games/", response_model=List[GameListItem])
 async def list_games():
     """List all available games."""
     result = []
@@ -64,11 +64,11 @@ async def join_game(game_id: str, request: JoinRequest):
     # Deal 6 cards to each player and set starter when 2 players join    
     if len(game.players) == 2:
         # initialize game and deck
-        game.phase = CribbagePhase.DEAL
+        game.change_phase(CribbagePhase.DEAL)
         deal_to_players(game.deck, game.players[0].player_id, game.players[1].player_id)
         game.dealer = game.players[0].player_id
         game.current_turn = game.players[1].player_id  # Non-dealer starts discard phase
-        game.phase = CribbagePhase.DISCARD
+        game.change_phase(CribbagePhase.DISCARD)
     
     # Update player stats
     if request.player_id not in player_stats:
@@ -114,11 +114,11 @@ async def discard_cards(game_id: str, request: DiscardRequest):
     # Check if both players have discarded
     if len(deck.get_cards("crib")) == 4:
         # flip starter card
-        game.phase = CribbagePhase.FLIP_STARTER
+        game.change_phase(CribbagePhase.FLIP_STARTER)
         deck.deal_to_pile("starter")
         # Non-dealer (player 1) starts play phase        
         game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)
-        game.phase = CribbagePhase.COUNT
+        game.change_phase(CribbagePhase.COUNT)
     return GameListItem.from_game_state(game)
 
 @app.post("/games/{game_id}/play")
@@ -151,7 +151,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     
     # Play card
     deck.play_card(card_idx, request.player_id, "phase1")
-    player.score += score_play_phase(deck.get_cards("phase1"))
+    player.score += score_play_phase(deck.get_cards("phase1"), score_log=game.append_log(player))
     
     # Check for Go
     next_player = game.players[(game.players.index(player) + 1) % 2]
@@ -162,19 +162,19 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     
     # Advance turn or move to show phase
     if not any(deck.get_cards(p.player_id) for p in game.players):
-        game.phase = CribbagePhase.SHOW
+        game.change_phase(CribbagePhase.SHOW)
         # Score show phase
         for p in game.players:
-            p.score += score_show_phase(deck.get_cards(p.player_id), deck.get_cards("starter")[0], is_crib=False)
+            p.score += score_show_phase(deck.get_cards(p.player_id), deck.get_cards("starter")[0], is_crib=False, score_log=game.append_log(p))
         if game.dealer:
             dealer = next(p for p in game.players if p.player_id == game.dealer)
-            dealer.score += score_show_phase(deck.get_cards("crib"), deck.get_cards("starter")[0], is_crib=True)
+            dealer.score += score_show_phase(deck.get_cards("crib"), deck.get_cards("starter")[0], is_crib=True, score_log=game.append_log(dealer))
         # Determine winner
         winner = max(game.players, key=lambda p: p.score)
         player_stats[winner.player_id]["wins"] += 1
         save_stats()
         # Reset game
-        game.phase = CribbagePhase.DONE
+        game.change_phase(CribbagePhase.DONE)
         return PlayerState.from_game_state(game)
     
     game.current_turn = next_player.player_id if next_valid else player.player_id
