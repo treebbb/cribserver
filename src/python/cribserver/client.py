@@ -13,8 +13,23 @@ from .api_model import Player, GameState, GameListItem, PlayerState, JoinRequest
 
 GAME_ID = "FIRST_GAME"
 
+
 def display_pile(card_indices):
     return ' '.join(Card.to_string(card_idx) for card_idx in card_indices)
+
+
+def redraw_needed(player_state1: PlayerState, player_state2: PlayerState) -> bool:
+    '''
+    compare state1 and state2
+    return true if redraw needed
+    '''
+    if (len(player_state1.game_log) != len(player_state2.game_log) or
+        player_state1.my_turn != player_state2.my_turn or
+        player_state1.phase != player_state2.phase or
+        player_state1.visible_piles != player_state2.visible_piles):
+        return True
+    return False
+
 
 class CribbageClient:
     def __init__(self, stdscr, server_url: str, player_id: str, player_name: str, game_id: str):
@@ -23,6 +38,8 @@ class CribbageClient:
         self.player_id = player_id
         self.player_name = player_name
         self.game_id = GAME_ID
+        self.needs_draw = True
+        self.state_lock = threading.Lock()
         self.player_state = PlayerState(
             game_id=GAME_ID,
             players=[],
@@ -88,12 +105,17 @@ class CribbageClient:
                 json=request.dict(),
             )
             response.raise_for_status()
-            self.player_state = PlayerState(**response.json())
+            self.set_player_state(PlayerState(**response.json()))
             self.message = f"Joined game! Players: {len(self.player_state.players)}"
             if self.player_state.phase == CribbagePhase.DISCARD:
                 self.message += " Game started, check your hand."
         except requests.RequestException as e:
             self.message = f"Error joining game: {str(e)}"
+
+    def set_player_state(self, player_state: PlayerState):
+        self.needs_draw = self.needs_draw | redraw_needed(player_state, self.player_state)
+        with self.state_lock:
+            self.player_state = player_state
 
     def poll_state(self):
         """Poll server for player state."""
@@ -103,7 +125,7 @@ class CribbageClient:
                 response = requests.get(f"{self.server_url}/games/{self.game_id}/{self.player_id}/state")
                 response.raise_for_status()
                 response_dict = response.json()
-                self.player_state = PlayerState(**response_dict)
+                self.set_player_state(PlayerState(**response_dict))
                 json.dump(response_dict, open('x.json', 'w'))
             except requests.RequestException as e:
                 self.message = f"Server error: {str(e)}"
@@ -135,6 +157,7 @@ class CribbageClient:
                 json=request.dict(),
             )
             response.raise_for_status()
+            self.set_player_state(PlayerState(**response.json()))
             self.message = "Cards discarded"
         except requests.RequestException as e:
             self.message = f"Error discarding: {str(e)}"
@@ -164,7 +187,7 @@ class CribbageClient:
                 json=request.dict(),
             )
             response.raise_for_status()
-            self.player_state = PlayerState(**response.json())
+            self.set_player_state(PlayerState(**response.json()))
             if self.player_state.phase == CribbagePhase.DONE:
                 self.message = f"Game over! "
                 self.message += f"Your Score: {get_me().score} "
@@ -241,14 +264,18 @@ class CribbageClient:
         """Main loop for handling input and drawing UI."""
         while self.running:
             try:
-                self.draw()
+                with self.state_lock:
+                    if self.needs_draw:
+                        self.draw()
+                        self.needs_draw = False
                 key = self.stdscr.getch()
-                if key >= 32 and key < 128:
+                if key == -1:  # No input
+                    continue
+                elif key >= 32 and key < 128:
                     keychar = chr(key)
                 else:
                     keychar = None
-                if key == -1:  # No input
-                    continue
+                self.needs_draw = True
                 if key == ord('q'):
                     self.running = False
                 elif key in range(ord('0'), ord('9') + 1) or keychar in ('C', 'D', 'H', 'S', 'A', 'J', 'Q', 'K'):

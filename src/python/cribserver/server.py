@@ -88,7 +88,7 @@ async def get_game_state(game_id: str, player_id: str):
     return PlayerState.from_game_state(game, player_id)
 
 
-@app.post("/games/{game_id}/discard", response_model=GameListItem)
+@app.post("/games/{game_id}/discard", response_model=PlayerState)
 async def discard_cards(game_id: str, request: DiscardRequest):
     """Discard 2 cards to the crib."""
     if game_id not in games:
@@ -119,7 +119,7 @@ async def discard_cards(game_id: str, request: DiscardRequest):
         # Non-dealer (player 1) starts play phase        
         game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)
         game.change_phase(CribbagePhase.COUNT)
-    return GameListItem.from_game_state(game)
+    return PlayerState.from_game_state(game, player.player_id)
 
 @app.post("/games/{game_id}/play")
 async def play_card(game_id: str, request: PlayRequest, response_model=PlayerState):
@@ -156,9 +156,23 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     # Check for Go
     next_player = game.players[(game.players.index(player) + 1) % 2]
     next_valid = any(Card.get_value(c) + game.phase1_total() <= 31 for c in deck.get_cards(next_player.player_id))
-    if not next_valid and not any(Card.get_value(c) + game.phase1_total() <= 31 for c in deck.get_cards(player.player_id)):
-        player.score += 1  # Go point
-        deck.drain_pile("phase1")
+    cur_valid = any(Card.get_value(c) + game.phase1_total() <= 31 for c in deck.get_cards(player.player_id))
+    if next_valid:
+        game.current_turn = next_player.player_id
+    else:
+        # opponent doesn't have any cards < 31. keep playing with the current player
+        if cur_valid:
+            # current player has more cards < 31. Let him continue playing
+            game.current_turn = player
+        else:
+            # current player doesn't have cards < 31 either. finish this round. Next player starts
+            game.game_log.append(f"{player.name} 1 point for Go")
+            if game.phase1_total() != 31:
+                # Go point. Don't double count if 31
+                player.score += 1
+            game.current_turn = next_player
+            deck.drain_pile("phase1")
+        
     
     # Advance turn or move to show phase
     if not any(deck.get_cards(p.player_id) for p in game.players):
@@ -176,10 +190,6 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
         # Reset game
         game.change_phase(CribbagePhase.DONE)
         return PlayerState.from_game_state(game)
-    
-    game.current_turn = next_player.player_id if next_valid else player.player_id
-    if game.phase1_total() == 31:
-        deck.drain_pile("phase1")
     
     return PlayerState.from_game_state(game, request.player_id)
 
