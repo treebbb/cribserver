@@ -151,6 +151,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     
     # Play card
     deck.play_card(card_idx, request.player_id, "phase1")
+    game.played_cards.append((request.player_id, card_idx))
     player.score += score_play_phase(deck.get_cards("phase1"), score_log=game.append_log(player))
     
     # Check for Go
@@ -163,14 +164,14 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
         # opponent doesn't have any cards < 31. keep playing with the current player
         if cur_valid:
             # current player has more cards < 31. Let him continue playing
-            game.current_turn = player
+            game.current_turn = player.player_id
         else:
             # current player doesn't have cards < 31 either. finish this round. Next player starts
             game.game_log.append(f"{player.name} 1 point for Go")
             if game.phase1_total() != 31:
                 # Go point. Don't double count if 31
                 player.score += 1
-            game.current_turn = next_player
+            game.current_turn = next_player.player_id
             deck.drain_pile("phase1")
         
     
@@ -178,8 +179,15 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     if not any(deck.get_cards(p.player_id) for p in game.players):
         game.change_phase(CribbagePhase.SHOW)
         # Score show phase
-        for p in game.players:
-            p.score += score_show_phase(deck.get_cards(p.player_id), deck.get_cards("starter")[0], is_crib=False, score_log=game.append_log(p))
+        for p in reversed(game.players): # second player counts first
+        # move cards back into player's hands and score
+            hand = []
+            for player_id, card_idx in game.played_cards:
+                if p.player_id == player_id:
+                    hand.append(card_idx)
+            p.score += score_show_phase(hand, deck.get_cards("starter")[0], is_crib=False, score_log=game.append_log(p))
+        # move to CRIB phase
+        game.change_phase(CribbagePhase.CRIB)
         if game.dealer:
             dealer = next(p for p in game.players if p.player_id == game.dealer)
             dealer.score += score_show_phase(deck.get_cards("crib"), deck.get_cards("starter")[0], is_crib=True, score_log=game.append_log(dealer))
@@ -189,7 +197,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
         save_stats()
         # Reset game
         game.change_phase(CribbagePhase.DONE)
-        return PlayerState.from_game_state(game)
+        return PlayerState.from_game_state(game, request.player_id)
     
     return PlayerState.from_game_state(game, request.player_id)
 

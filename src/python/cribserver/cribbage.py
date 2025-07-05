@@ -1,3 +1,4 @@
+import traceback
 from typing import List
 
 def score_play_phase(played_cards: List[int], score_log: List[str]) -> int:
@@ -72,6 +73,7 @@ from .cards import Card, Deck
 
 def score_show_phase(hand: List[int], starter: int, is_crib: bool = False, score_log: List[str] = None) -> int:
     """Score hand or crib in show phase (standard Cribbage rules) and log scoring events."""
+    # traceback.print_stack()
     if score_log is None:
         score_log = []
     score = 0
@@ -114,6 +116,7 @@ def score_show_phase(hand: List[int], starter: int, is_crib: bool = False, score
     if all(Card.get_suit(card) == Card.get_suit(hand[0]) for card in hand):
         score += 4
         flush_cards = [Card.to_string(card) for card in hand]
+        #print(f"FLUSH, {flush_cards}")
         score_log.append(f"4 points for flush of {', '.join(flush_cards)}")
         if not is_crib and all(Card.get_suit(card) == Card.get_suit(starter) for card in cards):
             score += 1
