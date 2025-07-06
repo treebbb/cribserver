@@ -6,7 +6,7 @@ import random
 import uvicorn
 from .cards import Card, Deck
 from .cribbage import score_play_phase, score_show_phase, deal_to_players
-from .api_model import Player, GameState, GameListItem, PlayerState, JoinRequest, PlayRequest, DiscardRequest, GoRequest, CribbagePhase
+from .api_model import Player, GameState, GameListItem, PlayerState, JoinRequest, PlayRequest, DiscardRequest, GoRequest, CribbagePhase, LogType
 
 # Initialize FastAPI app
 app = FastAPI(title="Cribbage Game Server")
@@ -16,6 +16,12 @@ games: Dict[str, GameState] = {}
 player_stats: Dict[str, Dict] = {}
 STATS_FILE = "player_stats.json"
 
+# DeckCreator is a hook for tests to override
+class DeckCreator:
+    def create_deck(self):
+        return Deck()
+DECK_CREATOR = DeckCreator()
+    
 # Load/save stats
 def load_stats():
     global player_stats
@@ -46,26 +52,33 @@ async def join_game(game_id: str, request: JoinRequest):
         games[game_id] = GameState(
             game_id=game_id,
             players=[],
-            deck=Deck(),
+            deck=DECK_CREATOR.create_deck(),
             dealer=None,
             current_turn=None,
             phase=CribbagePhase.JOIN,
         )
     
     game = games[game_id]
+    deck = game.deck
     if len(game.players) >= 2:
         raise HTTPException(status_code=400, detail="Game full (2 players max)")
     if any(p.player_id == request.player_id for p in game.players):
         raise HTTPException(status_code=400, detail="Player already in game")
-    
     game.players.append(Player(player_id=request.player_id, name=request.name))
+    game.game_log.append((LogType.PUBLIC, f"Player {request.name} joined game"))
+    game.log_action(LogType.JOIN, request.player_id, game_id)
 
     
     # Deal 6 cards to each player and set starter when 2 players join    
     if len(game.players) == 2:
         # initialize game and deck
         game.change_phase(CribbagePhase.DEAL)
-        deal_to_players(game.deck, game.players[0].player_id, game.players[1].player_id)
+        deal_to_players(deck, game.players[0].player_id, game.players[1].player_id)
+        # record
+        for i in range(0, 6):
+            for player in game.players:
+                game.log_action(LogType.DEAL, player.player_id, Card.to_string(deck.get_cards(player.player_id)[i]))
+        # set state
         game.dealer = game.players[0].player_id
         game.current_turn = game.players[1].player_id  # Non-dealer starts discard phase
         game.change_phase(CribbagePhase.DISCARD)
@@ -105,17 +118,21 @@ async def discard_cards(game_id: str, request: DiscardRequest):
     if len(request.card_indices) != 2:
         raise HTTPException(status_code=400, detail="Must discard exactly 2 cards")
     if any(card not in deck.get_cards(player.player_id) for card in request.card_indices):
+        print(f"NOT IN HAND: player_id={player.player_id}  cards={deck.get_cards(player.player_id)}")
         raise HTTPException(status_code=400, detail="Cards not in hand")
     
     # Move cards to crib
     for card_idx in request.card_indices:
         deck.play_card(card_idx, player.player_id, "crib")
+    game.log_action(LogType.DISCARD, player.player_id, ' '.join([Card.to_string(card_idx) for card_idx in request.card_indices]))
+    game.game_log.append((LogType.PUBLIC, f"Player {player.name} discarded 2 cards"))
     
     # Check if both players have discarded
     if len(deck.get_cards("crib")) == 4:
         # flip starter card
         game.change_phase(CribbagePhase.FLIP_STARTER)
         deck.deal_to_pile("starter")
+        game.log_action(LogType.DEAL, "starter", Card.to_string(deck.get_cards("starter")[0]))
         # Non-dealer (player 1) starts play phase        
         game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)
         game.change_phase(CribbagePhase.COUNT)
@@ -144,14 +161,16 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     card_idx = request.card_idx
     if card_idx not in deck.get_cards(request.player_id):
         print("3")
-        raise HTTPException(status_code=400, detail="Card not in hand")
+        raise HTTPException(status_code=400, detail=f"Card {card_idx} not in hand")
     if game.phase1_total() + Card.get_value(card_idx) > 31:
         print("4")
         raise HTTPException(status_code=400, detail="Card exceeds 31")
     
     # Play card
     deck.play_card(card_idx, request.player_id, "phase1")
-    game.played_cards.append((request.player_id, card_idx))
+    game.game_log.append((LogType.PUBLIC, f"Player {player.name} played {Card.to_string(card_idx)}"))
+    game.log_action(LogType.PLAY, player.player_id, Card.to_string(card_idx))
+    game.played_cards.append((request.player_id, card_idx))  # store for SHOW phase
     player.score += score_play_phase(deck.get_cards("phase1"), score_log=game.append_log(player))
     
     # Check for Go
@@ -167,7 +186,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
             game.current_turn = player.player_id
         else:
             # current player doesn't have cards < 31 either. finish this round. Next player starts
-            game.game_log.append(f"{player.name} 1 point for Go")
+            game.game_log.append((LogType.PUBLIC, f"{player.name} 1 point for Go"))
             if game.phase1_total() != 31:
                 # Go point. Don't double count if 31
                 player.score += 1
@@ -192,11 +211,22 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
             dealer = next(p for p in game.players if p.player_id == game.dealer)
             dealer.score += score_show_phase(deck.get_cards("crib"), deck.get_cards("starter")[0], is_crib=True, score_log=game.append_log(dealer))
         # Determine winner
+        for player in game.players:
+            game.game_log.append((LogType.PUBLIC, f"Player {player.name} score: {player.score}"))
         winner = max(game.players, key=lambda p: p.score)
+        game.game_log.append((LogType.PUBLIC, f"Player {winner.name} wins"))
         player_stats[winner.player_id]["wins"] += 1
         save_stats()
         # Reset game
         game.change_phase(CribbagePhase.DONE)
+        # DEBUG LOG
+        for typ, line in game.game_log:
+            if typ == LogType.PRIVATE:
+                print(line)
+        print('')
+        for typ, line in game.game_log:
+            if typ == LogType.PUBLIC:
+                print(line)
         return PlayerState.from_game_state(game, request.player_id)
     
     return PlayerState.from_game_state(game, request.player_id)

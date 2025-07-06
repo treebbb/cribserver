@@ -1,6 +1,12 @@
 import traceback
 from typing import List
 
+def cts(card_idx):
+    '''
+    card to string
+    '''
+    return Card.to_string(card_idx).strip()
+
 def score_play_phase(played_cards: List[int], score_log: List[str]) -> int:
     """Score the play phase for the last card played (custom Cribbage rules) and log scoring events."""
     if not played_cards:
@@ -21,24 +27,19 @@ def score_play_phase(played_cards: List[int], score_log: List[str]) -> int:
         score_log.append("2 points for 31 total")
 
     # Check for pairs (only with the last card)
-    pair_count = 1  # Count of consecutive cards with the same rank, starting with the last card
-    for i in range(len(played_cards) - 2, -1, -1):  # Check backwards from the second-to-last card
+    pair_cards = [last_card]
+    for i in range(len(played_cards) - 1):  # Check up to second-to-last card
         if Card.get_rank(played_cards[i]) == last_card_rank:
-            pair_count += 1
-        else:
-            break  # Stop at the first non-matching rank
-    if pair_count == 2:
+            pair_cards.append(played_cards[i])
+    if len(pair_cards) == 2:
         score += 2
-        pair_cards = [Card.to_string(played_cards[-i]) for i in range(1, pair_count + 1)]
-        score_log.append(f"2 points for pair of {', '.join(pair_cards)}")
-    elif pair_count == 3:
+        score_log.append(f"2 points for pair of {', '.join(cts(c) for c in pair_cards)}")
+    elif len(pair_cards) == 3:
         score += 6
-        triplet_cards = [Card.to_string(played_cards[-i]) for i in range(1, pair_count + 1)]
-        score_log.append(f"6 points for triplet of {', '.join(triplet_cards)}")
-    elif pair_count == 4:
+        score_log.append(f"6 points for triplet of {', '.join(cts(c) for c in pair_cards)}")
+    elif len(pair_cards) == 4:
         score += 12
-        quad_cards = [Card.to_string(played_cards[-i]) for i in range(1, pair_count + 1)]
-        score_log.append(f"12 points for quad of {', '.join(quad_cards)}")
+        score_log.append(f"12 points for quad of {', '.join(cts(c) for c in pair_cards)}")
 
     # Check for runs (only involving the last card)
     # Collect ranks of consecutive cards from the end
@@ -57,8 +58,8 @@ def score_play_phase(played_cards: List[int], score_log: List[str]) -> int:
                     # Found a run including the last card
                     run_cards = []
                     for card in played_cards[-length:]:  # Check recent cards for the run
-                        if Card.get_rank(card) in run and Card.to_string(card) not in run_cards:
-                            run_cards.append(Card.to_string(card))
+                        if Card.get_rank(card) in run and cts(card) not in run_cards:
+                            run_cards.append(cts(card))
                     run_cards.sort(key=lambda x: Card.get_rank(Card.from_string(x)))
                     score += length
                     score_log.append(f"{length} points for run of {', '.join(run_cards)}")
@@ -84,7 +85,7 @@ def score_show_phase(hand: List[int], starter: int, is_crib: bool = False, score
         for combo in itertools.combinations(cards, r):
             if sum(Card.get_value(card) for card in combo) == 15:
                 score += 2
-                combo_cards = [Card.to_string(card) for card in combo]
+                combo_cards = [cts(card) for card in combo]
                 score_log.append(f"2 points for 15 from {', '.join(combo_cards)}")
 
     # Pairs
@@ -96,42 +97,45 @@ def score_show_phase(hand: List[int], starter: int, is_crib: bool = False, score
         if count >= 2:
             pairs = count * (count - 1) // 2
             score += 2 * pairs
-            pair_cards = [Card.to_string(card) for card in cards if Card.get_rank(card) == rank]
+            pair_cards = [cts(card) for card in cards if Card.get_rank(card) == rank]
             score_log.append(f"{2 * pairs} points for {pairs} pair{'s' if pairs > 1 else ''} of {', '.join(pair_cards)}")
 
     # Runs
-    values = sorted([Card.get_rank(card) for card in cards])
-    for length in range(len(values), 2, -1):  # Check longest runs first
-        for combo in itertools.combinations(values, length):
-            if sorted(combo) == list(range(min(combo), min(combo) + length)):
-                run_cards = [Card.to_string(card) for card in cards if Card.get_rank(card) in combo]
+    values = sorted([Card.get_rank(card) for card in cards])  # Get ranks: [5, 8, 9, 9, 10]
+    for length in range(len(values), 2, -1):  # Check longest runs first (5, 4, 3)
+        runs = []
+        for combo in itertools.combinations(range(len(cards)), length):  # Pick card indices
+            combo_ranks = sorted([Card.get_rank(cards[i]) for i in combo])
+            if combo_ranks == list(range(min(combo_ranks), min(combo_ranks) + length)):
+                run_cards = [cts(cards[i]) for i in combo]
                 run_cards.sort(key=lambda x: Card.get_rank(Card.from_string(x)))
+                runs.append(run_cards)
+        if runs:  # If we found runs, score them and stop
+            for run_cards in runs:
                 score += length
                 score_log.append(f"{length} points for run of {', '.join(run_cards)}")
-                break  # Score longest run only
-        if any(sorted(combo) == list(range(min(combo), min(combo) + length)) for combo in itertools.combinations(values, length)):
-            break  # Stop if a run is found
+            break
 
     # Flush
     if all(Card.get_suit(card) == Card.get_suit(hand[0]) for card in hand):
         score += 4
-        flush_cards = [Card.to_string(card) for card in hand]
+        flush_cards = [cts(card) for card in hand]
         #print(f"FLUSH, {flush_cards}")
         score_log.append(f"4 points for flush of {', '.join(flush_cards)}")
         if not is_crib and all(Card.get_suit(card) == Card.get_suit(starter) for card in cards):
             score += 1
-            all_cards = [Card.to_string(card) for card in cards]
-            score_log.append(f"1 point for flush including starter {Card.to_string(starter)}")
+            all_cards = [cts(card) for card in cards]
+            score_log.append(f"1 point for flush including starter {cts(starter)}")
         elif is_crib and all(Card.get_suit(card) == Card.get_suit(starter) for card in cards):
             score += 5
-            all_cards = [Card.to_string(card) for card in cards]
+            all_cards = [cts(card) for card in cards]
             score_log.append(f"5 points for crib flush of {', '.join(all_cards)}")
 
     # Nobs
     for card in hand:
         if Card.get_rank(card) == Card.JACK_RANK and Card.get_suit(card) == Card.get_suit(starter):
             score += 1
-            score_log.append(f"1 point for nobs with {Card.to_string(card)} matching suit of starter {Card.to_string(starter)}")
+            score_log.append(f"1 point for nobs with {cts(card)} matching suit of starter {cts(starter)}")
 
     return score
 

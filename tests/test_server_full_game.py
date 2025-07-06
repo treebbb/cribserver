@@ -6,27 +6,42 @@ from cribserver.api_model import JoinRequest, DiscardRequest, PlayRequest, Cribb
 
 
 EXPECTED_GAME_LOG = '''
+Player P1 joined game
+Player P2 joined game
 game.phase -> DEAL
 game.phase -> DISCARD
+Player P1 discarded 2 cards
+Player P2 discarded 2 cards
 game.phase -> FLIP_STARTER
 game.phase -> COUNT
+Player P2 played 10C
+Player P1 played  5C
 P1 2 points for 15 total
+Player P2 played  8C
+Player P1 played  7C
 P1 1 point for Go
+Player P2 played  4C
+Player P1 played  JC
+Player P2 played  6C
+Player P1 played  9C
 P1 1 point for Go
 game.phase -> SHOW
-P2 4 points for flush of 10C,  8C,  4C,  6C
-P2 1 point for flush including starter  KC
-P1 2 points for 15 from  5C,  JC
-P1 2 points for 15 from  5C,  KC
-P1 4 points for flush of  5C,  7C,  JC,  9C
-P1 1 point for flush including starter  KC
-P1 1 point for nobs with  JC matching suit of starter  KC
+P2 4 points for flush of 10C, 8C, 4C, 6C
+P2 1 point for flush including starter KC
+P1 2 points for 15 from 5C, JC
+P1 2 points for 15 from 5C, KC
+P1 4 points for flush of 5C, 7C, JC, 9C
+P1 1 point for flush including starter KC
+P1 1 point for nobs with JC matching suit of starter KC
 game.phase -> CRIB
-P1 2 points for 15 from  3C,  QC,  2C
-P1 2 points for 15 from  3C,  2C,  KC
-P1 3 points for run of  AC,  2C,  3C
-P1 4 points for flush of  AC,  3C,  QC,  2C
-P1 5 points for crib flush of  AC,  3C,  QC,  2C,  KC
+P1 2 points for 15 from 3C, QC, 2C
+P1 2 points for 15 from 3C, 2C, KC
+P1 3 points for run of AC, 2C, 3C
+P1 4 points for flush of AC, 3C, QC, 2C
+P1 5 points for crib flush of AC, 3C, QC, 2C, KC
+Player P1 score: 30
+Player P2 score: 5
+Player P1 wins
 game.phase -> DONE
 '''
 
@@ -240,6 +255,8 @@ class TestCribbageServer(unittest.TestCase):
         # we are now in the show phase, crib phase, done phase
         self.assertEqual(state["phase"], CribbagePhase.DONE.value)
         # check game log
+        #for line in state["game_log"]:
+        #    print(line)
         expected = EXPECTED_GAME_LOG.strip().splitlines()
         self.assertEqual(state["game_log"], expected)
 
