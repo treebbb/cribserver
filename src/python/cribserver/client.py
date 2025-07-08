@@ -190,8 +190,8 @@ class CribbageClient:
             self.set_player_state(PlayerState(**response.json()))
             if self.player_state.phase == CribbagePhase.DONE:
                 self.message = f"Game over! "
-                self.message += f"Your Score: {get_me().score} "
-                self.message += f"Opponent: {get_opponent().score} "
+                self.message += f"Your Score: {self.get_me().score} "
+                self.message += f"Opponent: {self.get_opponent().score} "
             else:
                 self.message = f"Played {Card.to_string(card_idx)}"
         except requests.RequestException as e:
