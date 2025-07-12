@@ -1,7 +1,10 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from typing import List, Dict, Optional
 import json
 import os
+from pathlib import Path
 import random
 import uvicorn
 from .cards import Card, Deck
@@ -34,6 +37,13 @@ def save_stats():
         json.dump(player_stats, f, indent=2)
 
 load_stats()
+
+# static resources
+app.mount("/static", StaticFiles(directory="static"), name="static")
+@app.get("/", response_class=HTMLResponse)
+async def read_root():
+    html_path = Path("static/index.html")
+    return html_path.read_text()
 
 # API Endpoints
 @app.get("/games/", response_model=List[GameListItem])
