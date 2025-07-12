@@ -12,9 +12,9 @@ HOLE_RADIUS = HOLE_DIAMETER / 2
 # space between edges of holes
 SPACE_BETWEEN_POINTS = inch_to_px(3/32)
 # space between hole centers
-POINT_SPACING = SPACE_BETWEEN_POINTS + HOLE_DIAMETER
+HOLE_SPACING = SPACE_BETWEEN_POINTS + HOLE_DIAMETER
 # start_x and start_y are relative to the hole center at the bottom left of board
-START_X = inch_to_px(9/32) + HOLE_RADIUS  # 1/4" = 24px
+START_X = inch_to_px(9/32) + HOLE_RADIUS
 START_Y = BOARD_HEIGHT - inch_to_px(2) - HOLE_RADIUS
 # vertical gap between centers between 5 point groups
 GROUP_VERT_GAP = inch_to_px(5/16)
@@ -29,23 +29,27 @@ dwg = svgwrite.Drawing('static/board.svg', size=(BOARD_WIDTH, BOARD_HEIGHT), vie
 dwg.add(dwg.rect((0, 0), (BOARD_WIDTH, BOARD_HEIGHT), fill='none', stroke='black', stroke_width=2))
 
 # Function to add a group of 3 holes
-def add_hole_group(dwg, x, y, angle_degrees=0.0):
+def add_hole_group(dwg, x, y, angle_degrees=0.0, reverse_colors=False):
     '''
     angle_degrees is 0 horizontally (holes from left to right)
     angle_degrees progresses clockwise
     '''
+    if reverse_colors:
+        colors = ('blue', 'red', 'black')
+    else:
+        colors = ('black', 'red', 'blue')
     angle_rad = angle_degrees * 2 * pi / 360
     step_x_ratio = cos(angle_rad)
     step_y_ratio = sin(angle_rad)
-    step_x = POINT_SPACING * step_x_ratio
-    step_y = POINT_SPACING * step_y_ratio
-    dwg.add(dwg.circle(center=(x, y), r=HOLE_RADIUS, fill='none', stroke='black'))
+    step_x = HOLE_SPACING * step_x_ratio
+    step_y = HOLE_SPACING * step_y_ratio
+    dwg.add(dwg.circle(center=(x, y), r=HOLE_RADIUS, fill='none', stroke=colors[0]))
     x += step_x
     y += step_y
-    dwg.add(dwg.circle(center=(x, y), r=HOLE_RADIUS, fill='none', stroke='red'))
+    dwg.add(dwg.circle(center=(x, y), r=HOLE_RADIUS, fill='none', stroke=colors[1]))
     x += step_x
     y += step_y
-    dwg.add(dwg.circle(center=(x, y), r=HOLE_RADIUS, fill='none', stroke='blue'))
+    dwg.add(dwg.circle(center=(x, y), r=HOLE_RADIUS, fill='none', stroke=colors[2]))
 
 # draw grid every inch
 y_offset = BOARD_HEIGHT
@@ -64,11 +68,11 @@ for group in range(7):
         left_x = START_X
         for col in range(3):
             # left, right, center
-            add_hole_group(dwg, left_x, y_offset)
+            add_hole_group(dwg, left_x, y_offset, reverse_colors=(col == 2))
             left_x += GAP_BETWEEN_COLS
-        y_offset -= POINT_SPACING
+        y_offset -= HOLE_SPACING
     # gap between groups of 5
-    y_offset += POINT_SPACING  # revert last change to y_offset
+    y_offset += HOLE_SPACING  # revert last change to y_offset
     y_offset -= GROUP_VERT_GAP
 
 # top curve. 10 points total
@@ -92,12 +96,40 @@ for angle_deg in range(30, 180, 30):
     angle_rad = angle_deg * 2 * pi / 360.
     pt_x = center_x + cos(angle_rad) * radius
     pt_y = center_y + sin(angle_rad) * radius
-    add_hole_group(dwg, pt_x, pt_y, angle_deg)
+    add_hole_group(dwg, pt_x, pt_y, angle_deg, reverse_colors=True)
 
 # finish hole
 dwg.add(dwg.circle(center=(BOARD_WIDTH / 2, inch_to_px(1 + 13/32)), r=HOLE_RADIUS, fill='none', stroke='black'))
 
-
+def draw_point_count(text, x, y):
+    '''
+    x and y are the center position
+    '''
+    point_size = 14
+    point_px = inch_to_px(point_size / 72)
+    text_width = len(text) * point_px / 2
+    x -= text_width / 2
+    y += point_px / 2
+    dwg.add(dwg.text(text, insert=(x, y), fill='green', font_size=f'{point_size}px'))
+    
+#
+TEXT = '''
+START 85 80
+5 90 75
+10 95 70
+15 100 65
+20 105 60
+25 110 55
+30 115 50
+35 120 45
+'''.strip().splitlines()
+text_y = START_Y + inch_to_px(0.12)
+for line in TEXT:
+    text_x = START_X + HOLE_SPACING
+    for part in line.split():
+        draw_point_count(part, text_x, text_y)
+        text_x += GAP_BETWEEN_COLS
+    text_y -= (5 * HOLE_DIAMETER + 4 * SPACE_BETWEEN_POINTS + inch_to_px(14/72))
 
         
 '''
