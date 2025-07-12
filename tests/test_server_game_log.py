@@ -125,6 +125,12 @@ class TestCribbageServer(unittest.TestCase):
         expected_game_log = GAME2_EXPECTED.strip().splitlines()
         self.run_game_test(actions, expected_game_log)
 
+    def test_cribbage_game_flow3(self):
+        """Test the full game flow using the input framework."""
+        actions = GAME3_ACTIONS.strip().splitlines()
+        expected_game_log = GAME3_EXPECTED.strip().splitlines()
+        self.run_game_test(actions, expected_game_log)
+        
 GAME1_ACTIONS = '''
 JOIN,player1,test_game
 JOIN,player2,test_game
@@ -256,6 +262,77 @@ P1 2 points for 15 from QC, 5S
 Player P1 score: 18
 Player P2 score: 12
 Player P1 wins
+game.phase -> DONE
+'''
+
+GAME3_ACTIONS = '''
+JOIN,player1,test_game
+JOIN,player2,test_game
+DEAL,player1, 5S
+DEAL,player2, 5C
+DEAL,player1, 6D
+DEAL,player2, 5H
+DEAL,player1, 7C
+DEAL,player2, 10H
+DEAL,player1, JS
+DEAL,player2, 10S
+DEAL,player1, 2H
+DEAL,player2, KC
+DEAL,player1, 9D
+DEAL,player2, 3H
+DISCARD,player1, 2H  9D
+DISCARD,player2, KC  3H
+DEAL,starter, 10D
+PLAY,player2, 10S
+PLAY,player1, 5S
+PLAY,player2, 10H
+PLAY,player1, 6D
+PLAY,player2, 5H
+PLAY,player1, JS
+PLAY,player2, 5C
+PLAY,player1, 7C
+'''
+GAME3_EXPECTED = '''
+Player P1 joined game
+Player P2 joined game
+game.phase -> DEAL
+game.phase -> DISCARD
+Player P1 discarded 2 cards
+Player P2 discarded 2 cards
+game.phase -> FLIP_STARTER
+game.phase -> COUNT
+Player P2 played 10S
+Player P1 played  5S
+P1 2 points for 15 total
+Player P2 played 10H
+P2 2 points for pair of 10H, 10S
+Player P1 played  6D
+P1 2 points for 31 total
+Player P2 played  5H
+Player P1 played  JS
+P1 2 points for 15 total
+Player P2 played  5C
+P2 2 points for pair of 5C, 5H
+Player P1 played  7C
+P1 1 point for Go
+game.phase -> SHOW
+P2 2 points for 15 from 10S, 5H
+P2 2 points for 15 from 10S, 5C
+P2 2 points for 15 from 10H, 5H
+P2 2 points for 15 from 10H, 5C
+P2 2 points for 15 from 5H, 10D
+P2 2 points for 15 from 5C, 10D
+P2 6 points for 3 pairs of 10S, 10H, 10D
+P2 2 points for 1 pair of 5H, 5C
+P1 2 points for 15 from 5S, JS
+P1 2 points for 15 from 5S, 10D
+P1 3 points for run of 5S, 6D, 7C
+game.phase -> CRIB
+P1 2 points for 15 from 2H, KC, 3H
+P1 2 points for 15 from 2H, 3H, 10D
+Player P1 score: 18
+Player P2 score: 24
+Player P2 wins
 game.phase -> DONE
 '''
 

@@ -196,10 +196,10 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
             game.current_turn = player.player_id
         else:
             # current player doesn't have cards < 31 either. finish this round. Next player starts
-            game.game_log.append((LogType.PUBLIC, f"{player.name} 1 point for Go"))
             if game.phase1_total() != 31:
                 # Go point. Don't double count if 31
                 player.score += 1
+                game.game_log.append((LogType.PUBLIC, f"{player.name} 1 point for Go"))
             game.current_turn = next_player.player_id
             deck.drain_pile("phase1")
         
