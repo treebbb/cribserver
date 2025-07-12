@@ -1,0 +1,69 @@
+body {
+    font-family: Arial, sans-serif;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #f0f0f0;
+}
+
+.container {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px;
+}
+
+.card {
+    display: inline-block;
+    padding: 10px;
+    margin: 5px;
+    border: 1px solid #000;
+    border-radius: 5px;
+    background-color: #fff;
+    cursor: pointer;
+    width: 60px;
+    text-align: center;
+}
+
+.card.hearts, .card.diamonds {
+    color: red;
+}
+
+.card.clubs, .card.spades {
+    color: black;
+}
+
+.card.selected {
+    background-color: #d0ffd0;
+}
+
+.game-info, .game-log, .messages {
+    background-color: #fff;
+    padding: 15px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.game-log {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.messages {
+    color: green;
+    min-height: 100px;
+}
+
+.input-section {
+    margin-top: 10px;
+}
+
+button {
+    padding: 10px 20px;
+    margin: 5px;
+    cursor: pointer;
+}
+
+.disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
