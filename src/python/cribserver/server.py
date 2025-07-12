@@ -13,7 +13,7 @@ from .api_model import Player, GameState, GameListItem, PlayerState, JoinRequest
 
 # Initialize FastAPI app
 app = FastAPI(title="Cribbage Game Server")
-    
+
 # In-memory game state
 games: Dict[str, GameState] = {}
 player_stats: Dict[str, Dict] = {}
@@ -24,7 +24,7 @@ class DeckCreator:
     def create_deck(self):
         return Deck()
 DECK_CREATOR = DeckCreator()
-    
+
 # Load/save stats
 def load_stats():
     global player_stats
@@ -67,7 +67,7 @@ async def join_game(game_id: str, request: JoinRequest):
             current_turn=None,
             phase=CribbagePhase.JOIN,
         )
-    
+
     game = games[game_id]
     deck = game.deck
     if len(game.players) >= 2:
@@ -78,8 +78,8 @@ async def join_game(game_id: str, request: JoinRequest):
     game.game_log.append((LogType.PUBLIC, f"Player {request.name} joined game"))
     game.log_action(LogType.JOIN, request.player_id, game_id)
 
-    
-    # Deal 6 cards to each player and set starter when 2 players join    
+
+    # Deal 6 cards to each player and set starter when 2 players join
     if len(game.players) == 2:
         # initialize game and deck
         game.change_phase(CribbagePhase.DEAL)
@@ -92,14 +92,14 @@ async def join_game(game_id: str, request: JoinRequest):
         game.dealer = game.players[0].player_id
         game.current_turn = game.players[1].player_id  # Non-dealer starts discard phase
         game.change_phase(CribbagePhase.DISCARD)
-    
+
     # Update player stats
     if request.player_id not in player_stats:
         player_stats[request.player_id] = {"name": request.name, "wins": 0, "games_played": 1}
     else:
         player_stats[request.player_id]["games_played"] += 1
     save_stats()
-    
+
     return PlayerState.from_game_state(game, request.player_id)
 
 @app.get("/games/{game_id}/{player_id}/state")
@@ -116,12 +116,12 @@ async def discard_cards(game_id: str, request: DiscardRequest):
     """Discard 2 cards to the crib."""
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
-    
+
     game = games[game_id]
     deck = game.deck
     if game.phase != CribbagePhase.DISCARD:
         raise HTTPException(status_code=400, detail="Can only discard in DISCARD phase")
-    
+
     player = next((p for p in game.players if p.player_id == request.player_id), None)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -130,20 +130,20 @@ async def discard_cards(game_id: str, request: DiscardRequest):
     if any(card not in deck.get_cards(player.player_id) for card in request.card_indices):
         print(f"NOT IN HAND: player_id={player.player_id}  cards={deck.get_cards(player.player_id)}")
         raise HTTPException(status_code=400, detail="Cards not in hand")
-    
+
     # Move cards to crib
     for card_idx in request.card_indices:
         deck.play_card(card_idx, player.player_id, "crib")
     game.log_action(LogType.DISCARD, player.player_id, ' '.join([Card.to_string(card_idx) for card_idx in request.card_indices]))
     game.game_log.append((LogType.PUBLIC, f"Player {player.name} discarded 2 cards"))
-    
+
     # Check if both players have discarded
     if len(deck.get_cards("crib")) == 4:
         # flip starter card
         game.change_phase(CribbagePhase.FLIP_STARTER)
         deck.deal_to_pile("starter")
         game.log_action(LogType.DEAL, "starter", Card.to_string(deck.get_cards("starter")[0]))
-        # Non-dealer (player 1) starts play phase        
+        # Non-dealer (player 1) starts play phase
         game.current_turn = next(p.player_id for p in game.players if p.player_id != game.dealer)
         game.change_phase(CribbagePhase.COUNT)
     return PlayerState.from_game_state(game, player.player_id)
@@ -153,7 +153,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     """Play a card in the count phase."""
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
-    
+
     game = games[game_id]
     deck = game.deck
     if game.phase != CribbagePhase.COUNT:
@@ -162,11 +162,11 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     if request.player_id != game.current_turn:
         print("2")
         raise HTTPException(status_code=400, detail="Not your turn")
-    
+
     player = next((p for p in game.players if p.player_id == request.player_id), None)
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
-    
+
     # Convert request.card to Card object
     card_idx = request.card_idx
     if card_idx not in deck.get_cards(request.player_id):
@@ -175,14 +175,14 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
     if game.phase1_total() + Card.get_value(card_idx) > 31:
         print("4")
         raise HTTPException(status_code=400, detail="Card exceeds 31")
-    
+
     # Play card
     deck.play_card(card_idx, request.player_id, "phase1")
     game.game_log.append((LogType.PUBLIC, f"Player {player.name} played {Card.to_string(card_idx)}"))
     game.log_action(LogType.PLAY, player.player_id, Card.to_string(card_idx))
     game.played_cards.append((request.player_id, card_idx))  # store for SHOW phase
     player.score += score_play_phase(deck.get_cards("phase1"), score_log=game.append_log(player))
-    
+
     # Check for Go
     next_player = game.players[(game.players.index(player) + 1) % 2]
     next_valid = any(Card.get_value(c) + game.phase1_total() <= 31 for c in deck.get_cards(next_player.player_id))
@@ -202,8 +202,8 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
                 game.game_log.append((LogType.PUBLIC, f"{player.name} 1 point for Go"))
             game.current_turn = next_player.player_id
             deck.drain_pile("phase1")
-        
-    
+
+
     # Advance turn or move to show phase
     if not any(deck.get_cards(p.player_id) for p in game.players):
         game.change_phase(CribbagePhase.SHOW)
@@ -229,6 +229,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
         save_stats()
         # Reset game
         game.change_phase(CribbagePhase.DONE)
+
         # DEBUG LOG
         for typ, line in game.game_log:
             if typ == LogType.PRIVATE:
@@ -238,7 +239,7 @@ async def play_card(game_id: str, request: PlayRequest, response_model=PlayerSta
             if typ == LogType.PUBLIC:
                 print(line)
         return PlayerState.from_game_state(game, request.player_id)
-    
+
     return PlayerState.from_game_state(game, request.player_id)
 
 @app.get("/players/{player_id}/stats")
@@ -251,4 +252,4 @@ async def get_player_stats(player_id: str):
 def run_server():
     """Run the FastAPI server with uvicorn."""
     uvicorn.run("cribserver.server:app", host="0.0.0.0", port=5000, reload=True)
-    
+

@@ -111,15 +111,17 @@ function updateUI(state) {
     }
 
     // Update player's hand
-    const hand = state.visible_piles[playerId] || [];
-    const handHtml = hand.map((idx, i) => `
+    if (selectedCards.length == 0) {
+      const hand = state.visible_piles[playerId] || [];
+      const handHtml = hand.map((idx, i) => `
         <div class="card ${getSuitClass(idx)}" 
              onclick="selectCard('${cardIndexToString(idx)}', this)"
              data-index="${idx}">
             ${cardIndexToString(idx)}
         </div>
-    `).join('');
-    document.getElementById('hand-cards').innerHTML = handHtml;
+      `).join('');
+      document.getElementById('hand-cards').innerHTML = handHtml;
+    }
 
     // Update prompt and button
     const prompt = document.getElementById('prompt');
@@ -149,13 +151,15 @@ function updateUI(state) {
     document.getElementById('messages').textContent = state.message || document.getElementById('messages').textContent;
 
     // Update game log
-    const log = state.game_log.slice(-10).map(line => `<p>${line}</p>`).join('');
+    //const log = state.game_log.slice(-10).map(line => `<p>${line}</p>`).join('');
+    const log = state.game_log.map(line => `<p>${line}</p>`).join('');
     document.getElementById('game-log').innerHTML = log || '<p>No game log yet.</p>';
 
     // Reset selected cards if phase changes
     if (state.phase !== CribbagePhase.DISCARD && state.phase !== CribbagePhase.COUNT) {
         selectedCards = [];
-        document.querySelectorAll('.card').forEach(card => card.classList.remove('selected'));
+      document.querySelectorAll('.card').forEach(card => card.classList.remove('selected'));
+      console.log(`state update cleared selected cards: state=${state.phase}`)
     }
 }
 
